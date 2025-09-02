@@ -1,0 +1,106 @@
+﻿@page
+@model ApplicationDeployment.Pages.IndexModel
+
+<h1>Application Deployment</h1>
+
+<form method="post" id="deploymentForm" onsubmit="event.preventDefault(); startCopy();">
+    <label>Destination Servers:</label>
+    <select multiple size="10" name="SelectedServers" asp-for="SelectedServers" asp-items="Model.Servers"></select>
+    <br />
+
+    <label>Available Apps:</label>
+    <select id="appSelect" name="SelectedApp" asp-for="SelectedApp" asp-items="Model.Apps">
+        <option value="">-- Select an App --</option>
+    </select>
+    <br />
+
+    <label>Available Builds:</label>
+    <select id="buildSelect" name="SelectedBuild" asp-for="SelectedBuild" asp-items="Model.Builds">
+        <option value="">-- Select a Build --</option>
+    </select>
+    <br />
+
+    <button type="submit">OK</button>
+</form>
+
+<div id="progressContainer" style="display:none;">
+    <progress id="progressBar" value="0" max="100"></progress>
+    <span id="statusMessage"></span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+<script>
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl("/copyHub")
+        .build();
+
+    connection.on("ReceiveProgress", p => document.getElementById("progressBar").value = p);
+    connection.on("ReceiveMessage", m => document.getElementById("statusMessage").textContent += m + "\n");
+    connection.start().catch(err => console.error("SignalR connection error:", err));
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const appSelect = document.getElementById('appSelect');
+        const buildSelect = document.getElementById('buildSelect');
+
+        appSelect.addEventListener('change', function () {
+            const selectedApp = this.value;
+            const fetchUrl = `/Index?handler=BuildsForApp&selectedApp=${encodeURIComponent(selectedApp)}`;
+            if (!selectedApp) { buildSelect.innerHTML = '<option value="">-- Select a Build --</option>'; return; }
+
+            fetch(fetchUrl)
+                .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+                .then(data => {
+                    buildSelect.innerHTML = '<option value="">-- Select a Build --</option>';
+                    (data || []).forEach(b => {
+                        if (b?.value && b?.text) {
+                            const o = document.createElement('option');
+                            o.value = b.value; o.text = b.text;
+                            buildSelect.appendChild(o);
+                        }
+                    });
+                })
+                .catch(err => { console.error("Build fetch error:", err); alert("Error fetching builds."); });
+        });
+    });
+
+    function startCopy() {
+        const form = document.getElementById('deploymentForm');
+        const selectedServers = Array.from(form.querySelectorAll('select[name="SelectedServers"] option:checked')).map(o => o.value);
+        const selectedApp = document.getElementById('appSelect').value;
+        const selectedBuild = document.getElementById('buildSelect').value;
+
+        if (!selectedServers.length || !selectedApp || !selectedBuild) {
+            alert("Please select at least one server, an app, and a build.");
+            return;
+        }
+
+        document.getElementById("progressContainer").style.display = "block";
+
+        // Collect existing form data (includes __RequestVerificationToken)
+        const fd = new FormData(form);
+        // Remove any unselected servers then append only selected
+        fd.delete('SelectedServers');
+        selectedServers.forEach(s => fd.append('SelectedServers', s));
+
+        const token = fd.get('__RequestVerificationToken');
+
+        const body = new URLSearchParams(fd).toString();
+
+        fetch('/Index?handler=Copy', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'RequestVerificationToken': token // header alternative (body already has it, safe either way)
+            },
+            body
+        })
+        .then(r => {
+            if (!r.ok) return r.text().then(t => { console.error("Server error:", r.status, t); throw new Error("Server error"); });
+            return r.json();
+        })
+        .then(data => {
+            if (!data.success) alert(data.message);
+        })
+        .catch(err => console.error("Copy start error:", err));
+    }
+</script>
