@@ -1,106 +1,255 @@
 ﻿@page
 @model ApplicationDeployment.Pages.IndexModel
+@using System.Text.Json
 
-<h1>Application Deployment</h1>
+<form id="deploymentForm" method="post" onsubmit="event.preventDefault(); startCopy();" class="container my-4">
+    @Html.AntiForgeryToken()
+    <input type="hidden" id="hubConnectionId" name="HubConnectionId" />
+    <h1 class="display-5 text-primary mb-4">Application Deployment</h1>
 
-<form method="post" id="deploymentForm" onsubmit="event.preventDefault(); startCopy();">
-    <label>Destination Servers:</label>
-    <select multiple size="10" name="SelectedServers" asp-for="SelectedServers" asp-items="Model.Servers"></select>
-    <br />
+    <div class="row g-4">
+        <!-- LEFT: Servers + Env Filters -->
+        <div class="col-lg-3">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header bg-light fw-semibold">Destination Servers</div>
+                <div class="card-body d-flex flex-column">
+                    <label class="form-label small">Servers</label>
+                    <select id="serversSelect" class="form-select mb-2" multiple size="10"
+                            name="SelectedServers" asp-for="SelectedServers" asp-items="Model.Servers"></select>
 
-    <label>Available Apps:</label>
-    <select id="appSelect" name="SelectedApp" asp-for="SelectedApp" asp-items="Model.Apps">
-        <option value="">-- Select an App --</option>
-    </select>
-    <br />
+                    <div id="serverChips" class="mb-2 d-flex flex-wrap gap-2 small"></div>
 
-    <label>Available Builds:</label>
-    <select id="buildSelect" name="SelectedBuild" asp-for="SelectedBuild" asp-items="Model.Builds">
-        <option value="">-- Select a Build --</option>
-    </select>
-    <br />
+                    <label class="form-label small mt-2">Environment Filter</label>
+                    <div id="envFilters" class="btn-group btn-group-sm mb-2" role="group">
+                        @foreach (var env in new[] { "DEV","QA","UAT","REG","STG","PRD" })
+                        {
+                            <button type="button" class="btn btn-outline-secondary env-btn" data-env="@env">@env</button>
+                        }
+                    </div>
 
-    <button type="submit">OK</button>
+                    <div class="mt-auto small text-muted">
+                        Use filters to limit visible builds in center column.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CENTER: Apps as separate cards with scrollable multiselect build lists -->
+        <div class="col-lg-6">
+            <div class="row row-cols-1 row-cols-md-2 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
+                @if (Model.AppBuildGroups == null || Model.AppBuildGroups.Count == 0)
+                {
+                    <div class="col">
+                        <div class="alert alert-warning m-0">No applications found.</div>
+                    </div>
+                }
+                else
+                {
+                    foreach (var group in Model.AppBuildGroups.OrderBy(g => g.AppName))
+                    {
+                        var safeApp = Html.Raw(group.AppName);
+                        <div class="col">
+                            <div class="card h-100 shadow-sm app-card" data-app="@group.AppName">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <div class="fw-semibold text-truncate" style="max-width:80%;">@group.AppName</div>
+                                    <span class="badge bg-secondary small app-badge" data-app-badge="@group.AppName">@group.Builds.Count</span>
+                                </div>
+                                <div class="card-body p-2">
+                                    @if (group.Builds.Count == 0)
+                                    {
+                                        <div class="text-muted small">No builds</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="form-check" style="max-height:220px; overflow:auto;">
+                                            @foreach (var build in group.Builds)
+                                            {
+                                                var value = $"{group.AppName}|{build}";
+                                                <div class="form-check">
+                                                    <input class="form-check-input build-checkbox" type="checkbox"
+                                                           id="@($"chk_{HashCode.Combine(group.AppName, build)}")"
+                                                           name="Selections" value="@value" data-app="@group.AppName" data-build="@build" />
+                                                    <label class="form-check-label small text-wrap" for="@($"chk_{HashCode.Combine(group.AppName, build)}")" title="@build">
+                                                        @build
+                                                    </label>
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        <!-- RIGHT: Actions and Progress -->
+        <div class="col-lg-3">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header bg-light fw-semibold">Actions</div>
+                <div class="card-body d-flex flex-column">
+                    <div class="mb-3">
+                        <button type="submit" class="btn btn-primary w-100 mb-2">Deploy Selected</button>
+                        <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100">Clear Selection</button>
+                    </div>
+
+                    <div class="small mb-2"><strong>Selected Builds</strong></div>
+                    <div id="selectionSummary" class="small mb-3" style="max-height:120px; overflow:auto;">(none)</div>
+
+                    <div id="progressContainer" class="d-none mt-auto">
+                        <div class="small text-muted mb-1">Progress</div>
+                        <div class="progress mb-2" style="height:20px;">
+                            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%">0%</div>
+                        </div>
+                        <pre id="statusMessage" class="small bg-light p-2 rounded" style="height:160px; overflow:auto;"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </form>
 
-<div id="progressContainer" style="display:none;">
-    <progress id="progressBar" value="0" max="100"></progress>
-    <span id="statusMessage"></span>
-</div>
+@section Scripts {
+<style>
+    .app-card { min-height: 220px; }
+    .app-card .card-body { padding: 0.5rem; }
+    .form-check-label { white-space: normal; }
+    .env-btn.active { background:#0d6efd; color:#fff; border-color:#0d6efd; }
+    .build-checkbox:checked + label { font-weight:600; color:#0d6efd; }
+</style>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
 <script>
-    const connection = new signalR.HubConnectionBuilder()
-        .withUrl("/copyHub")
-        .build();
+(function(){
+    // Helpers
+    const serversSelect = document.getElementById('serversSelect');
+    const serverChips = document.getElementById('serverChips');
+    const selectionSummary = document.getElementById('selectionSummary');
+    const clearSelectionBtn = document.getElementById('clearSelection');
+    const progressContainer = document.getElementById('progressContainer');
 
-    connection.on("ReceiveProgress", p => document.getElementById("progressBar").value = p);
-    connection.on("ReceiveMessage", m => document.getElementById("statusMessage").textContent += m + "\n");
-    connection.start().catch(err => console.error("SignalR connection error:", err));
+    // Server chips
+    function refreshServerChips(){
+        serverChips.innerHTML = '';
+        Array.from(serversSelect.options).filter(o=>o.selected).forEach(o=>{
+            const span = document.createElement('span');
+            span.className = 'badge rounded-pill bg-primary';
+            span.textContent = o.value;
+            serverChips.appendChild(span);
+        });
+    }
+    serversSelect?.addEventListener('change', refreshServerChips);
+    refreshServerChips();
 
-    document.addEventListener('DOMContentLoaded', () => {
-        const appSelect = document.getElementById('appSelect');
-        const buildSelect = document.getElementById('buildSelect');
+    // Build selection summary
+    function refreshSelectionSummary(){
+        const checks = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked);
+        if(checks.length === 0){
+            selectionSummary.textContent = '(none)';
+            return;
+        }
+        selectionSummary.innerHTML = '';
+        checks.forEach(c=>{
+            const app = c.dataset.app;
+            const build = c.dataset.build;
+            const div = document.createElement('div');
+            div.textContent = app + ' :: ' + build;
+            selectionSummary.appendChild(div);
+        });
+    }
 
-        appSelect.addEventListener('change', function () {
-            const selectedApp = this.value;
-            const fetchUrl = `/Index?handler=BuildsForApp&selectedApp=${encodeURIComponent(selectedApp)}`;
-            if (!selectedApp) { buildSelect.innerHTML = '<option value="">-- Select a Build --</option>'; return; }
-
-            fetch(fetchUrl)
-                .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-                .then(data => {
-                    buildSelect.innerHTML = '<option value="">-- Select a Build --</option>';
-                    (data || []).forEach(b => {
-                        if (b?.value && b?.text) {
-                            const o = document.createElement('option');
-                            o.value = b.value; o.text = b.text;
-                            buildSelect.appendChild(o);
-                        }
-                    });
-                })
-                .catch(err => { console.error("Build fetch error:", err); alert("Error fetching builds."); });
+    document.querySelectorAll('.build-checkbox').forEach(cb=>{
+        cb.addEventListener('change', ()=> {
+            refreshSelectionSummary();
         });
     });
 
-    function startCopy() {
+    clearSelectionBtn.addEventListener('click', ()=>{
+        document.querySelectorAll('.build-checkbox').forEach(cb=>{
+            cb.checked = false;
+        });
+        refreshSelectionSummary();
+    });
+
+    // Env filter
+    const envButtons = document.querySelectorAll('.env-btn');
+    function activeEnvFilters(){ return Array.from(envButtons).filter(b=>b.classList.contains('active')).map(b=>b.dataset.env); }
+    function envMatches(buildName, envs){
+        if(envs.length===0) return true;
+        return envs.some(env => new RegExp(`(^|[^A-Z0-9])${env}([^A-Z0-9]|$)`, 'i').test(buildName));
+    }
+    function applyEnvFilter(){
+        const envs = activeEnvFilters();
+        document.querySelectorAll('.build-checkbox').forEach(cb=>{
+            const build = cb.dataset.build || '';
+            cb.parentElement.style.display = envMatches(build, envs) ? '' : 'none';
+            if(cb.parentElement.style.display === 'none') cb.checked = false;
+        });
+        refreshSelectionSummary();
+    }
+    envButtons.forEach(b=> b.addEventListener('click', ()=> { b.classList.toggle('active'); applyEnvFilter(); }));
+    document.getElementById('clearEnvFilters')?.addEventListener('click', ()=> {
+        envButtons.forEach(b=>b.classList.remove('active'));
+        applyEnvFilter();
+    });
+
+    // SignalR
+    const connection = new signalR.HubConnectionBuilder().withUrl("/copyHub").build();
+    connection.on("ReceiveProgress", p => {
+        const bar = document.getElementById("progressBar");
+        bar.style.width = p + "%";
+        bar.textContent = p + "%";
+    });
+    connection.on("ReceiveMessage", m => {
+        const box = document.getElementById("statusMessage");
+        box.textContent += m + "\n";
+        box.scrollTop = box.scrollHeight;
+    });
+    connection.start().then(()=> {
+        document.getElementById('hubConnectionId').value = connection.connectionId;
+    }).catch(err=>console.error("SignalR connection error:", err));
+
+    // Deploy
+    window.startCopy = function(){
+        const servers = Array.from(document.querySelectorAll('#serversSelect option:checked')).map(o=>o.value);
+        const selections = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked).map(c=>c.value);
+        const hubId = document.getElementById('hubConnectionId').value;
+
+        if(servers.length === 0){ alert('Select at least one server.'); return; }
+        if(selections.length === 0){ alert('Select at least one build.'); return; }
+
+        // Ensure hidden inputs for selections exist (checkboxes are inputs named Selections already)
+        progressContainer.classList.remove('d-none');
+
+        // Build form body
         const form = document.getElementById('deploymentForm');
-        const selectedServers = Array.from(form.querySelectorAll('select[name="SelectedServers"] option:checked')).map(o => o.value);
-        const selectedApp = document.getElementById('appSelect').value;
-        const selectedBuild = document.getElementById('buildSelect').value;
-
-        if (!selectedServers.length || !selectedApp || !selectedBuild) {
-            alert("Please select at least one server, an app, and a build.");
-            return;
-        }
-
-        document.getElementById("progressContainer").style.display = "block";
-
-        // Collect existing form data (includes __RequestVerificationToken)
         const fd = new FormData(form);
-        // Remove any unselected servers then append only selected
+
+        // Remove existing SelectedServers entries (we append only the checked ones)
         fd.delete('SelectedServers');
-        selectedServers.forEach(s => fd.append('SelectedServers', s));
+        servers.forEach(s=> fd.append('SelectedServers', s));
+
+        // Hub id
+        fd.set('HubConnectionId', hubId);
 
         const token = fd.get('__RequestVerificationToken');
-
         const body = new URLSearchParams(fd).toString();
 
         fetch('/Index?handler=Copy', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'RequestVerificationToken': token // header alternative (body already has it, safe either way)
+                'RequestVerificationToken': token
             },
             body
-        })
-        .then(r => {
-            if (!r.ok) return r.text().then(t => { console.error("Server error:", r.status, t); throw new Error("Server error"); });
+        }).then(r=> {
+            if(!r.ok) return r.text().then(t=>{ console.error('Server error', r.status, t); throw new Error('Server error'); });
             return r.json();
-        })
-        .then(data => {
-            if (!data.success) alert(data.message);
-        })
-        .catch(err => console.error("Copy start error:", err));
-    }
+        }).then(obj=>{
+            if(!obj.success) alert(obj.message || 'Failed');
+        }).catch(err=>{ console.error('Copy start error:', err); });
+    };
+
+})();
 </script>
+}

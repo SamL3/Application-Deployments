@@ -20,3 +20,8 @@ html {
 body {
   margin-bottom: 60px;
 }
+
+/* Example override */
+.btn-primary {
+  background-color:#214b8c;
+}

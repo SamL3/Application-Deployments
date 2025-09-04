@@ -7,8 +7,12 @@ using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading.Tasks;
 
 namespace ApplicationDeployment.Pages
 {
@@ -47,6 +51,15 @@ namespace ApplicationDeployment.Pages
         public string SelectedBuild { get; set; } = string.Empty;
         public string BuildVersion { get; set; } = string.Empty;
 
+        // Grouped structure for center-column cards
+        public class AppBuildGroup
+        {
+            public string AppName { get; set; } = string.Empty;
+            public List<string> Builds { get; set; } = new();
+        }
+
+        public List<AppBuildGroup> AppBuildGroups { get; set; } = new();
+
         public void OnGet()
         {
             var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? throw new InvalidOperationException("CsvFilePath not configured"));
@@ -56,6 +69,7 @@ namespace ApplicationDeployment.Pages
             var stagingPath = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
             if (Directory.Exists(stagingPath))
             {
+                // legacy dropdown lists
                 Apps = Directory.GetDirectories(stagingPath)
                     .Select(d => new SelectListItem { Value = Path.GetFileName(d), Text = Path.GetFileName(d) })
                     .ToList();
@@ -70,92 +84,134 @@ namespace ApplicationDeployment.Pages
                         .OrderByDescending(d => Directory.GetCreationTime(Path.Combine(buildsPath, d.Value)))
                         .ToList();
                 }
+
+                // build grouped cards for center column
+                AppBuildGroups = Directory.GetDirectories(stagingPath)
+                    .Select(appDir =>
+                    {
+                        var appName = Path.GetFileName(appDir);
+                        var builds = Directory.Exists(appDir)
+                            ? Directory.GetDirectories(appDir)
+                                .Select(d => Path.GetFileName(d))
+                                .OrderByDescending(name => Directory.GetCreationTime(Path.Combine(appDir, name)))
+                                .ToList()
+                            : new List<string>();
+                        return new AppBuildGroup { AppName = appName, Builds = builds };
+                    })
+                    .OrderBy(g => g.AppName)
+                    .ToList();
             }
         }
 
         public IActionResult OnGetBuildsForApp(string selectedApp)
         {
+            if (string.IsNullOrWhiteSpace(selectedApp))
+                return new JsonResult(Array.Empty<object>());
+
             var stagingPath = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
-            var appPath = Path.Combine(stagingPath, selectedApp);
-            var buildsPath = Path.Combine(appPath, ""); // Builds
-            _logger.LogInformation("Fetching builds for app {SelectedApp}, Path: {BuildsPath}, Exists: {Exists}", selectedApp, buildsPath, Directory.Exists(buildsPath));
-            var builds = new List<SelectListItem>();
-            if (Directory.Exists(buildsPath))
+            var buildsPath = Path.Combine(stagingPath, selectedApp);
+            if (!Directory.Exists(buildsPath))
             {
-                builds = Directory.GetDirectories(buildsPath)
-                    .Select(d => new SelectListItem { Value = Path.GetFileName(d), Text = Path.GetFileName(d) })
-                    .OrderByDescending(d => Directory.GetCreationTime(Path.Combine(buildsPath, d.Value)))
-                    .ToList();
+                _logger.LogWarning("Builds path missing for {App}: {Path}", selectedApp, buildsPath);
+                return new JsonResult(Array.Empty<object>());
             }
-            return new JsonResult(builds);
+
+            var list = Directory.GetDirectories(buildsPath)
+                .Select(d => Path.GetFileName(d))
+                .Select(name => new { value = name, text = name })
+                .OrderByDescending(x => Directory.GetCreationTime(Path.Combine(buildsPath, x.value)))
+                .ToList();
+
+            return new JsonResult(list);
         }
 
-        public async Task<IActionResult> OnPostCopyAsync([FromForm] string[] SelectedServers, [FromForm] string SelectedApp, [FromForm] string SelectedBuild)
+        public async Task<IActionResult> OnPostCopyAsync(
+            [FromForm] string[] SelectedServers,
+            [FromForm] string[] Selections,
+            [FromForm] string HubConnectionId)
         {
-            // Log the received values for debugging
-            _logger.LogInformation("Request.Form: {Form}", string.Join(", ", Request.Form.Select(kvp => $"{kvp.Key}={kvp.Value}")));
-            _logger.LogInformation("SelectedServers: {Servers}", SelectedServers == null ? "null" : string.Join(",", SelectedServers));
-            _logger.LogInformation("SelectedApp: {App}", SelectedApp);
-            _logger.LogInformation("SelectedBuild: {Build}", SelectedBuild);
+            _logger.LogInformation("Copy requested. HubConnectionId: {HubId} SelectedServers: {Servers} Selections: {Selections}",
+                HubConnectionId,
+                SelectedServers == null ? "null" : string.Join(",", SelectedServers),
+                Selections == null ? "null" : string.Join(",", Selections));
 
-            if (SelectedServers == null || !SelectedServers.Any() || string.IsNullOrEmpty(SelectedApp) || string.IsNullOrEmpty(SelectedBuild))
+            if (SelectedServers == null || SelectedServers.Length == 0)
+                return new JsonResult(new { success = false, message = "Please select at least one server." });
+
+            if (Selections == null || Selections.Length == 0)
+                return new JsonResult(new { success = false, message = "Please select at least one build." });
+
+            var staging = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
+
+            // Parse selections in the form "AppName|BuildName"
+            var pairs = ParseSelections(Selections)
+                .Where(p => !string.IsNullOrWhiteSpace(p.App) && !string.IsNullOrWhiteSpace(p.Build))
+                .Where(p => Directory.Exists(Path.Combine(staging, p.App, p.Build)))
+                .ToList();
+
+            if (pairs.Count == 0)
             {
-                _logger.LogError("Please select at least one server, an app, and a build.");
-                return new JsonResult(new { success = false, message = "Please select at least one server, an app, and a build." });
+                _logger.LogWarning("No valid source folders found for provided selections.");
+                return new JsonResult(new { success = false, message = "No valid build sources found for the chosen selections." });
             }
 
-            var userId = User.Identity?.Name ?? Request.HttpContext.Connection.Id;
-            var copyTasks = SelectedServers.Select(server => CopyFilesAsync(server, SelectedApp, SelectedBuild, userId));
-            await Task.WhenAll(copyTasks);
-            return new JsonResult(new { success = true });
+            // Run copy tasks: for each server x each selected app/build pair
+            var tasks = new List<Task>();
+            foreach (var server in SelectedServers)
+            {
+                foreach (var pair in pairs)
+                {
+                    tasks.Add(CopyFilesAsync(server, pair.App, pair.Build, HubConnectionId));
+                }
+            }
+
+            await Task.WhenAll(tasks);
+
+            return new JsonResult(new { success = true, totalCopies = tasks.Count });
         }
 
-        private async Task CopyFilesAsync(string selectedServer, string selectedApp, string selectedBuild, string userId)
+        private async Task CopyFilesAsync(string selectedServer, string selectedApp, string selectedBuild, string hubConnectionId)
         {
             try
             {
-                // Corrected source path (removed extra "Builds")
-                var sourcePath = Path.Combine(
-                    _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured"),
-                    selectedApp,
-                    selectedBuild);
-
-                _logger.LogInformation("Resolved sourcePath: {Source} Exists:{Exists}", sourcePath, Directory.Exists(sourcePath));
-
+                var sourcePath = Path.Combine(_config["StagingPath"]!, selectedApp, selectedBuild);
                 if (!Directory.Exists(sourcePath))
                 {
-                    await _hubContext.Clients.User(userId)
+                    await _hubContext.Clients.Client(hubConnectionId)
                         .SendAsync("ReceiveMessage", $"Source not found: {sourcePath}");
-                    throw new Exception("Source not found.");
+                    return;
                 }
 
-                var destPath = $"\\\\{selectedServer ?? throw new ArgumentNullException(nameof(selectedServer))}\\C$\\{_config["CSTApps"] ?? throw new InvalidOperationException("CSTApps not configured")}\\{selectedApp}\\{selectedBuild}";
-                _logger.LogInformation("Resolved destPath: {Dest}", destPath);
+                var destPath = $@"\\{selectedServer}\C$\{_config["CSTApps"]}\{selectedApp}\{selectedBuild}";
+                Directory.CreateDirectory(destPath);
 
                 var files = Directory.GetFiles(sourcePath, "*.*", SearchOption.AllDirectories);
                 int total = files.Length;
-
-                Directory.CreateDirectory(destPath);
-
                 int copied = 0;
+
                 foreach (var file in files)
                 {
-                    var destFile = Path.Combine(destPath, Path.GetRelativePath(sourcePath, file));
+                    var rel = Path.GetRelativePath(sourcePath, file);
+                    var destFile = Path.Combine(destPath, rel);
                     Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
                     System.IO.File.Copy(file, destFile, true);
                     copied++;
                     int progress = total == 0 ? 100 : (int)(copied * 100.0 / total);
-                    await _hubContext.Clients.User(userId).SendAsync("ReceiveProgress", progress);
+                    await _hubContext.Clients.Client(hubConnectionId)
+                        .SendAsync("ReceiveProgress", progress);
                 }
 
-                await _hubContext.Clients.User(userId).SendAsync("ReceiveMessage", $"Copy completed for {selectedServer}.");
+                await _hubContext.Clients.Client(hubConnectionId)
+                    .SendAsync("ReceiveMessage", $"Copy completed for {selectedServer}.");
                 CreateShortcut(selectedServer, selectedApp, selectedBuild);
-                await _hubContext.Clients.User(userId).SendAsync("ReceiveMessage", $"Shortcut created for {selectedServer}.");
+                await _hubContext.Clients.Client(hubConnectionId)
+                    .SendAsync("ReceiveMessage", $"Shortcut created for {selectedServer}.");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Copy failed for {Server}.", selectedServer);
-                await _hubContext.Clients.User(userId).SendAsync("ReceiveMessage", $"Error for {selectedServer}: {ex.Message}");
+                _logger.LogError(ex, "Copy failed for {Server}", selectedServer);
+                await _hubContext.Clients.Client(hubConnectionId)
+                    .SendAsync("ReceiveMessage", $"Error for {selectedServer}: {ex.Message}");
             }
         }
 
@@ -172,8 +228,6 @@ namespace ApplicationDeployment.Pages
             
             var shortcutName = $"{selectedApp} {selectedBuild}.lnk";
             _logger.LogInformation("shortcutName:{shortcutName}", shortcutName);
-
-
 
             var remoteShortcutPath = Path.Combine(remoteDesktopDir, shortcutName);
             _logger.LogInformation("remoteShortcutPath:{remoteShortcutPath}", remoteShortcutPath);
@@ -238,6 +292,17 @@ namespace ApplicationDeployment.Pages
                 return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
             }
             return new Dictionary<string, string>();
+        }
+
+        private IEnumerable<(string App, string Build)> ParseSelections(IEnumerable<string> selections)
+        {
+            foreach (var s in selections)
+            {
+                if (string.IsNullOrWhiteSpace(s)) continue;
+                var parts = s.Split('|', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (parts.Length == 2)
+                    yield return (parts[0], parts[1]);
+            }
         }
     }
 }
