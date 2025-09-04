@@ -26,6 +26,8 @@
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0-preview.7.25380.108" />
     <PackageReference Include="MongoDB.Driver" Version="3.4.3" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.4" />
+    <!-- Required to use System.Management (WMI) APIs on .NET 8 -->
+    <PackageReference Include="System.Management" Version="8.0.0" />
   </ItemGroup>
 
 </Project>

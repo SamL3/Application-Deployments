@@ -1,0 +1,267 @@
+@page
+@model ApplicationDeployment.Pages.MaintenanceModel
+@using System.Text.Json
+
+<h1 class="mb-3">Maintenance — Deployed Applications</h1>
+
+<form id="maintenanceForm">
+    @Html.AntiForgeryToken()
+    <div class="row g-4">
+        <div class="col-lg-3">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header">Servers</div>
+                <div class="card-body p-2">
+                    <div class="list-group" id="serversList">
+                        @foreach (var s in Model.Servers)
+                        {
+                            <button type="button" class="list-group-item list-group-item-action server-btn" data-server="@s.Value">@s.Text</button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header">Deployments on Selected Server</div>
+                <div class="card-body p-2">
+                    <div id="deploymentsContainer" class="row g-3">
+                        <div class="col-12 text-muted">Select a server to view deployments.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-3">
+            <div class="card h-100 shadow-sm">
+                <div class="card-header">Actions</div>
+                <div class="card-body d-flex flex-column">
+                    <div id="selectedInfo" class="mb-3 small text-muted">No selection</div>
+                    <button type="button" id="removeSelectedBtn" class="btn btn-danger mb-2" disabled>Remove Selected Build</button>
+                    <button type="button" id="removeAppBtn" class="btn btn-outline-danger mb-2" disabled>Remove Entire App</button>
+                    <div id="maintenanceStatus" class="small text-muted mt-auto">Ready</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+<!-- Confirmation modal (Bootstrap) -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Confirm Remove</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmMessage">This will delete the path:</p>
+        <pre id="confirmPath" class="small bg-light p-2 rounded"></pre>
+        <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="confirmReally" />
+            <label class="form-check-label" for="confirmReally">I understand this will permanently delete the folder.</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="confirmCancel" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="confirmOk" class="btn btn-danger" disabled>Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+@section Scripts {
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Server-side configured root (escaped safely)
+    const cstApps = @Html.Raw(JsonSerializer.Serialize(Model.CstApps ?? ""));
+
+    const serversList = document.getElementById('serversList');
+    const deploymentsContainer = document.getElementById('deploymentsContainer');
+    const selectedInfo = document.getElementById('selectedInfo');
+    const removeSelectedBtn = document.getElementById('removeSelectedBtn');
+    const removeAppBtn = document.getElementById('removeAppBtn');
+    const status = document.getElementById('maintenanceStatus');
+
+    let currentServer = null;
+    let currentSelection = { app: null, build: null };
+
+    // Modal elements
+    const confirmModalEl = document.getElementById('confirmModal');
+    const confirmModal = (typeof bootstrap !== 'undefined' && confirmModalEl) ? new bootstrap.Modal(confirmModalEl) : null;
+    const confirmPath = document.getElementById('confirmPath');
+    const confirmReally = document.getElementById('confirmReally');
+    const confirmOk = document.getElementById('confirmOk');
+
+    // Delegate click on server buttons (works even if list is re-rendered)
+    serversList?.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('.server-btn');
+        if (!btn) return;
+        // toggle active class
+        serversList.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        currentServer = btn.dataset.server;
+        selectedInfo.textContent = `Server: ${currentServer}`;
+        // reset selection UI
+        currentSelection = { app: null, build: null };
+        removeSelectedBtn.disabled = true;
+        removeAppBtn.disabled = true;
+        await loadDeployments(currentServer);
+    });
+
+    async function loadDeployments(server) {
+        deploymentsContainer.innerHTML = '<div class="col-12">Loading...</div>';
+        try {
+            const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            renderDeployments(data);
+            status.textContent = 'Loaded';
+        } catch (e) {
+            deploymentsContainer.innerHTML = `<div class="col-12 text-danger">Error loading: ${e.message}</div>`;
+            status.textContent = 'Error';
+        }
+    }
+
+    function renderDeployments(data) {
+        deploymentsContainer.innerHTML = '';
+        if (!data || data.length === 0) {
+            deploymentsContainer.innerHTML = '<div class="col-12 text-muted">No deployments found on this server.</div>';
+            return;
+        }
+
+        data.forEach(group => {
+            const col = document.createElement('div');
+            col.className = 'col-12';
+            // build HTML safely
+            const header = document.createElement('div');
+            header.className = 'card';
+            const inner = `
+                <div class="card-header small fw-semibold">${escapeHtml(group.app)} <span class="badge bg-secondary ms-2">${group.builds.length}</span></div>
+                <div class="card-body p-2" style="max-height:200px;overflow:auto">
+                    <ul class="list-group list-group-flush" data-app="${escapeHtml(group.app)}">
+                        ${group.builds.map(b => `
+                        <li class="list-group-item d-flex justify-content-between align-items-center build-row" data-app="${escapeHtml(group.app)}" data-build="${escapeHtml(b)}">
+                            <span class="small text-wrap">${escapeHtml(b)}</span>
+                            <div>
+                                <button class="btn btn-sm btn-outline-danger remove-build-btn">Remove</button>
+                            </div>
+                        </li>`).join('')}
+                    </ul>
+                </div>`;
+            header.innerHTML = inner;
+            col.appendChild(header);
+            deploymentsContainer.appendChild(col);
+        });
+
+        // wire remove buttons (delegated)
+        deploymentsContainer.querySelectorAll('.remove-build-btn').forEach(btn => {
+            btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const li = ev.target.closest('.build-row');
+                if (!li) return;
+                const app = li.dataset.app;
+                const build = li.dataset.build;
+                currentSelection = { app, build };
+                selectedInfo.textContent = `Selected: ${app} :: ${build}`;
+                removeSelectedBtn.disabled = false;
+                removeAppBtn.disabled = false;
+            });
+        });
+
+        // wire clicking on a list group (select app)
+        deploymentsContainer.querySelectorAll('[data-app]').forEach(ul => {
+            ul.addEventListener('click', () => {
+                const app = ul.getAttribute('data-app');
+                currentSelection = { app, build: null };
+                selectedInfo.textContent = `Selected app: ${app}`;
+                removeSelectedBtn.disabled = true;
+                removeAppBtn.disabled = false;
+            });
+        });
+    }
+
+    // show confirm modal, build UNC path using server-side CSTApps value
+    function showConfirm(server, app, build, removeApp) {
+        const unc = build
+            ? `\\\\${server}\\C$\\${cstApps}\\${app}\\${build}`
+            : `\\\\${server}\\C$\\${cstApps}\\${app}`;
+
+        confirmPath.textContent = unc;
+        confirmReally.checked = false;
+        confirmOk.disabled = true;
+        confirmModal?.show();
+
+        confirmReally.onchange = () => confirmOk.disabled = !confirmReally.checked;
+        confirmOk.onclick = async () => {
+            confirmModal?.hide();
+            await postRemove(server, app, build, removeApp);
+        };
+    }
+
+    removeSelectedBtn.addEventListener('click', () => {
+        if (!currentServer || !currentSelection.app || !currentSelection.build) return;
+        showConfirm(currentServer, currentSelection.app, currentSelection.build, false);
+    });
+
+    removeAppBtn.addEventListener('click', () => {
+        if (!currentServer || !currentSelection.app) return;
+        showConfirm(currentServer, currentSelection.app, null, true);
+    });
+
+    async function postRemove(server, app, build, removeApp) {
+        status.textContent = 'Removing...';
+
+        const tokenInput = document.querySelector('input[name="__RequestVerificationToken"]');
+        const token = tokenInput ? tokenInput.value : '';
+
+        const body = new URLSearchParams();
+        body.append('server', server);
+        body.append('app', app);
+        if (build) body.append('build', build);
+        body.append('removeApp', removeApp ? 'true' : 'false');
+
+        try {
+            const resp = await fetch('/Maintenance?handler=Remove', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'RequestVerificationToken': token
+                },
+                body: body.toString()
+            });
+
+            const ct = resp.headers.get('content-type') || '';
+            let payload = null;
+            if (ct.includes('application/json')) {
+                payload = await resp.json();
+            } else {
+                const text = await resp.text();
+                payload = { success: resp.ok, message: text || resp.statusText };
+            }
+
+            if (!resp.ok || !payload || !payload.success) {
+                status.textContent = 'Remove failed';
+                alert('Remove failed: ' + (payload?.message ?? resp.status));
+                console.error('Remove failed', resp.status, payload);
+                return;
+            }
+
+            status.textContent = payload.message || 'Removed';
+            await loadDeployments(server);
+            currentSelection = { app: null, build: null };
+            selectedInfo.textContent = 'No selection';
+            removeSelectedBtn.disabled = true;
+            removeAppBtn.disabled = true;
+        } catch (e) {
+            status.textContent = 'Error';
+            console.error('Remove error', e);
+            alert('Error removing: ' + e.message);
+        }
+    }
+
+    function escapeHtml(s) { return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+});
+</script>
+}
