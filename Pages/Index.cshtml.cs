@@ -1,4 +1,5 @@
 using ApplicationDeployment.Hubs;
+using ApplicationDeployment.Models;
 using DnsClient.Internal;
 using IWshRuntimeLibrary;
 using Microsoft.AspNetCore.Mvc;
@@ -22,23 +23,25 @@ namespace ApplicationDeployment.Pages
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<IndexModel> _logger;
         private readonly Dictionary<string, string> _appExes;
-        private readonly IHubContext<CopyHub> _hubContext; // Added
+        private readonly IHubContext<CopyHub> _hubContext;
 
         public IndexModel(
             IConfiguration config,
             IWebHostEnvironment env,
             ILogger<IndexModel> logger,
-            IHubContext<CopyHub> hubContext) // Added
+            IHubContext<CopyHub> hubContext)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _env = env ?? throw new ArgumentNullException(nameof(env));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext)); // Added
+            _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
             _appExes = LoadAppExes();
         }
 
         [BindProperty]
         public List<SelectListItem> Servers { get; set; } = new();
+        [BindProperty]
+        public List<ServerInfo> ServerList { get; set; } = new();
         [BindProperty]
         public List<SelectListItem> Apps { get; set; } = new();
         [BindProperty]
@@ -64,7 +67,25 @@ namespace ApplicationDeployment.Pages
         {
             var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? throw new InvalidOperationException("CsvFilePath not configured"));
             var serverLines = System.IO.File.ReadAllLines(csvPath);
-            Servers = serverLines.Select(s => new SelectListItem { Value = s, Text = s }).ToList();
+            
+            // Parse CSV with hostname, userid, description
+            ServerList = serverLines
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line =>
+                {
+                    var parts = line.Split(',', StringSplitOptions.TrimEntries);
+                    return new ServerInfo
+                    {
+                        HostName = parts.Length > 0 ? parts[0] : string.Empty,
+                        UserID = parts.Length > 1 ? parts[1] : string.Empty,
+                        Description = parts.Length > 2 ? parts[2] : string.Empty
+                    };
+                })
+                .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
+                .ToList();
+
+            // Keep legacy format for backward compatibility
+            Servers = ServerList.Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName }).ToList();
 
             var stagingPath = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
             if (Directory.Exists(stagingPath))
@@ -224,7 +245,6 @@ namespace ApplicationDeployment.Pages
 
             var targetOnRemote = $@"C:\{stagingAppsRoot}\{selectedApp}\{selectedBuild}\{exeName}";
             var remoteDesktopDir = $@"\\{selectedServer}\C$\CSTApps";
-            //var remoteDesktopDir = $@"\\{selectedServer}\C$\Users\Public\Desktop";
             
             var shortcutName = $"{selectedApp} {selectedBuild}.lnk";
             _logger.LogInformation("shortcutName:{shortcutName}", shortcutName);

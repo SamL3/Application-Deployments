@@ -1,3 +1,4 @@
+using ApplicationDeployment.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -24,6 +25,7 @@ namespace ApplicationDeployment.Pages
         }
 
         public List<SelectListItem> Servers { get; set; } = new();
+        public List<ServerInfo> ServerList { get; set; } = new();
 
         public string CstApps => _config["CSTApps"] ?? string.Empty;
 
@@ -31,7 +33,25 @@ namespace ApplicationDeployment.Pages
         {
             var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? throw new InvalidOperationException("CsvFilePath not configured"));
             var serverLines = System.IO.File.ReadAllLines(csvPath);
-            Servers = serverLines.Select(s => new SelectListItem { Value = s, Text = s }).ToList();
+            
+            // Parse CSV with hostname, userid, description
+            ServerList = serverLines
+                .Where(line => !string.IsNullOrWhiteSpace(line))
+                .Select(line =>
+                {
+                    var parts = line.Split(',', StringSplitOptions.TrimEntries);
+                    return new ServerInfo
+                    {
+                        HostName = parts.Length > 0 ? parts[0] : string.Empty,
+                        UserID = parts.Length > 1 ? parts[1] : string.Empty,
+                        Description = parts.Length > 2 ? parts[2] : string.Empty
+                    };
+                })
+                .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
+                .ToList();
+
+            // Keep legacy format for backward compatibility
+            Servers = ServerList.Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName }).ToList();
         }
 
         // GET handler: /Maintenance?handler=Deployments&server=NAME

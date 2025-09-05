@@ -14,8 +14,35 @@
                 <div class="card-header bg-light fw-semibold">Destination Servers</div>
                 <div class="card-body d-flex flex-column">
                     <label class="form-label small">Servers</label>
-                    <select id="serversSelect" class="form-select mb-2" multiple size="10"
-                            name="SelectedServers" asp-for="SelectedServers" asp-items="Model.Servers"></select>
+                    <div class="table-responsive" style="max-height:300px; overflow:auto;">
+                        <table class="table table-sm table-hover mb-2">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th scope="col">
+                                        <input type="checkbox" id="selectAllServers" class="form-check-input" title="Select All">
+                                    </th>
+                                    <th scope="col">Host</th>
+                                    <th scope="col">User</th>
+                                    <th scope="col">Description</th>
+                                </tr>
+                            </thead>
+                            <tbody id="serversTableBody">
+                                @foreach (var server in Model.ServerList)
+                                {
+                                    <tr class="server-row" data-hostname="@server.HostName">
+                                        <td>
+                                            <input type="checkbox" class="form-check-input server-checkbox" 
+                                                   name="SelectedServers" value="@server.HostName" 
+                                                   id="server_@server.HostName">
+                                        </td>
+                                        <td class="fw-semibold">@server.HostName</td>
+                                        <td class="small text-muted">@server.UserID</td>
+                                        <td class="small">@server.Description</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
 
                     <div id="serverChips" class="mb-2 d-flex flex-wrap gap-2 small"></div>
 
@@ -117,28 +144,93 @@
     .form-check-label { white-space: normal; }
     .env-btn.active { background:#0d6efd; color:#fff; border-color:#0d6efd; }
     .build-checkbox:checked + label { font-weight:600; color:#0d6efd; }
+    .server-row:hover { background-color: rgba(0,123,255,0.1); }
+    .server-row.selected { background-color: rgba(0,123,255,0.2); }
+    .sticky-top { position: sticky; top: 0; z-index: 10; }
 </style>
 
 <script>
 (function(){
     // Helpers
-    const serversSelect = document.getElementById('serversSelect');
+    const serverCheckboxes = document.querySelectorAll('.server-checkbox');
+    const selectAllServers = document.getElementById('selectAllServers');
     const serverChips = document.getElementById('serverChips');
     const selectionSummary = document.getElementById('selectionSummary');
     const clearSelectionBtn = document.getElementById('clearSelection');
     const progressContainer = document.getElementById('progressContainer');
 
+    // Server row selection (full row click)
+    document.querySelectorAll('.server-row').forEach(row => {
+        row.addEventListener('click', (e) => {
+            if (e.target.type === 'checkbox') return; // Don't interfere with checkbox clicks
+            
+            const checkbox = row.querySelector('.server-checkbox');
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change'));
+        });
+    });
+
+    // Server checkbox handling
+    function updateServerRowStyles() {
+        serverCheckboxes.forEach(cb => {
+            const row = cb.closest('.server-row');
+            if (cb.checked) {
+                row.classList.add('selected');
+            } else {
+                row.classList.remove('selected');
+            }
+        });
+    }
+
+    function updateSelectAllState() {
+        const totalCheckboxes = serverCheckboxes.length;
+        const checkedCheckboxes = Array.from(serverCheckboxes).filter(cb => cb.checked).length;
+        
+        if (checkedCheckboxes === 0) {
+            selectAllServers.indeterminate = false;
+            selectAllServers.checked = false;
+        } else if (checkedCheckboxes === totalCheckboxes) {
+            selectAllServers.indeterminate = false;
+            selectAllServers.checked = true;
+        } else {
+            selectAllServers.indeterminate = true;
+            selectAllServers.checked = false;
+        }
+    }
+
+    // Select all functionality
+    selectAllServers.addEventListener('change', () => {
+        const checked = selectAllServers.checked;
+        serverCheckboxes.forEach(cb => {
+            cb.checked = checked;
+        });
+        updateServerRowStyles();
+        refreshServerChips();
+    });
+
+    // Individual checkbox change handlers
+    serverCheckboxes.forEach(cb => {
+        cb.addEventListener('change', () => {
+            updateServerRowStyles();
+            updateSelectAllState();
+            refreshServerChips();
+        });
+    });
+
     // Server chips
     function refreshServerChips(){
         serverChips.innerHTML = '';
-        Array.from(serversSelect.options).filter(o=>o.selected).forEach(o=>{
+        Array.from(serverCheckboxes).filter(cb => cb.checked).forEach(cb => {
             const span = document.createElement('span');
             span.className = 'badge rounded-pill bg-primary';
-            span.textContent = o.value;
+            span.textContent = cb.value;
             serverChips.appendChild(span);
         });
     }
-    serversSelect?.addEventListener('change', refreshServerChips);
+
+    // Initialize server states
+    updateServerRowStyles();
+    updateSelectAllState();
     refreshServerChips();
 
     // Build selection summary
@@ -211,23 +303,18 @@
 
     // Deploy
     window.startCopy = function(){
-        const servers = Array.from(document.querySelectorAll('#serversSelect option:checked')).map(o=>o.value);
+        const servers = Array.from(serverCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
         const selections = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked).map(c=>c.value);
         const hubId = document.getElementById('hubConnectionId').value;
 
         if(servers.length === 0){ alert('Select at least one server.'); return; }
         if(selections.length === 0){ alert('Select at least one build.'); return; }
 
-        // Ensure hidden inputs for selections exist (checkboxes are inputs named Selections already)
         progressContainer.classList.remove('d-none');
 
         // Build form body
         const form = document.getElementById('deploymentForm');
         const fd = new FormData(form);
-
-        // Remove existing SelectedServers entries (we append only the checked ones)
-        fd.delete('SelectedServers');
-        servers.forEach(s=> fd.append('SelectedServers', s));
 
         // Hub id
         fd.set('HubConnectionId', hubId);

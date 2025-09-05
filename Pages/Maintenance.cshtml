@@ -11,22 +11,46 @@
             <div class="card h-100 shadow-sm">
                 <div class="card-header">Servers</div>
                 <div class="card-body p-2">
-                    <div class="list-group" id="serversList">
-                        @foreach (var s in Model.Servers)
-                        {
-                            <button type="button" class="list-group-item list-group-item-action server-btn" data-server="@s.Value">@s.Text</button>
-                        }
+                    <div class="table-responsive" style="max-height:400px; overflow:auto;">
+                        <table class="table table-sm table-hover mb-2">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th scope="col">
+                                        <input type="checkbox" id="selectAllServers" class="form-check-input" title="Select All">
+                                    </th>
+                                    <th scope="col">Host</th>
+                                    <th scope="col">User</th>
+                                    <th scope="col">Description</th>
+                                </tr>
+                            </thead>
+                            <tbody id="serversTableBody">
+                                @foreach (var server in Model.ServerList)
+                                {
+                                    <tr class="server-row" data-hostname="@server.HostName">
+                                        <td>
+                                            <input type="checkbox" class="form-check-input server-checkbox" 
+                                                   value="@server.HostName" 
+                                                   id="server_@server.HostName">
+                                        </td>
+                                        <td class="fw-semibold">@server.HostName</td>
+                                        <td class="small text-muted">@server.UserID</td>
+                                        <td class="small">@server.Description</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
+                    <div id="selectedServersInfo" class="small text-muted mt-2">No servers selected</div>
                 </div>
             </div>
         </div>
 
         <div class="col-lg-6">
             <div class="card h-100 shadow-sm">
-                <div class="card-header">Deployments on Selected Server</div>
+                <div class="card-header">Deployments on Selected Servers</div>
                 <div class="card-body p-2">
                     <div id="deploymentsContainer" class="row g-3">
-                        <div class="col-12 text-muted">Select a server to view deployments.</div>
+                        <div class="col-12 text-muted">Select server(s) to view deployments.</div>
                     </div>
                 </div>
             </div>
@@ -39,6 +63,7 @@
                     <div id="selectedInfo" class="mb-3 small text-muted">No selection</div>
                     <button type="button" id="removeSelectedBtn" class="btn btn-danger mb-2" disabled>Remove Selected Build</button>
                     <button type="button" id="removeAppBtn" class="btn btn-outline-danger mb-2" disabled>Remove Entire App</button>
+                    <button type="button" id="loadDeploymentsBtn" class="btn btn-primary mb-2" disabled>Load Deployments</button>
                     <div id="maintenanceStatus" class="small text-muted mt-auto">Ready</div>
                 </div>
             </div>
@@ -71,6 +96,12 @@
 </div>
 
 @section Scripts {
+<style>
+    .server-row:hover { background-color: rgba(0,123,255,0.1); }
+    .server-row.selected { background-color: rgba(0,123,255,0.2); }
+    .sticky-top { position: sticky; top: 0; z-index: 10; }
+</style>
+
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     // Add error handling for Bootstrap
@@ -83,15 +114,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Server-side configured root (escaped safely)
     const cstApps = @Html.Raw(JsonSerializer.Serialize(Model.CstApps ?? ""));
 
-    const serversList = document.getElementById('serversList');
+    const serverCheckboxes = document.querySelectorAll('.server-checkbox');
+    const selectAllServers = document.getElementById('selectAllServers');
+    const selectedServersInfo = document.getElementById('selectedServersInfo');
+    const loadDeploymentsBtn = document.getElementById('loadDeploymentsBtn');
     const deploymentsContainer = document.getElementById('deploymentsContainer');
     const selectedInfo = document.getElementById('selectedInfo');
     const removeSelectedBtn = document.getElementById('removeSelectedBtn');
     const removeAppBtn = document.getElementById('removeAppBtn');
     const status = document.getElementById('maintenanceStatus');
 
-    let currentServer = null;
-    let currentSelection = { app: null, build: null };
+    let selectedServers = [];
+    let currentSelection = { app: null, build: null, server: null };
 
     // Modal elements
     const confirmModalEl = document.getElementById('confirmModal');
@@ -100,38 +134,177 @@ document.addEventListener('DOMContentLoaded', () => {
     const confirmReally = document.getElementById('confirmReally');
     const confirmOk = document.getElementById('confirmOk');
 
-    // Delegate click on server buttons (works even if list is re-rendered)
-    serversList?.addEventListener('click', async (ev) => {
-        const btn = ev.target.closest('.server-btn');
-        if (!btn) return;
-        // toggle active class
-        serversList.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        currentServer = btn.dataset.server;
-        selectedInfo.textContent = `Server: ${currentServer}`;
-        // reset selection UI
-        currentSelection = { app: null, build: null };
-        removeSelectedBtn.disabled = true;
-        removeAppBtn.disabled = true;
-        await loadDeployments(currentServer);
+    // Server row selection (full row click)
+    document.querySelectorAll('.server-row').forEach(row => {
+        row.addEventListener('click', (e) => {
+            if (e.target.type === 'checkbox') return; // Don't interfere with checkbox clicks
+            
+            const checkbox = row.querySelector('.server-checkbox');
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change'));
+        });
     });
 
-    async function loadDeployments(server) {
+    // Server checkbox handling
+    function updateServerRowStyles() {
+        serverCheckboxes.forEach(cb => {
+            const row = cb.closest('.server-row');
+            if (cb.checked) {
+                row.classList.add('selected');
+            } else {
+                row.classList.remove('selected');
+            }
+        });
+    }
+
+    function updateSelectAllState() {
+        const totalCheckboxes = serverCheckboxes.length;
+        const checkedCheckboxes = Array.from(serverCheckboxes).filter(cb => cb.checked).length;
+        
+        if (checkedCheckboxes === 0) {
+            selectAllServers.indeterminate = false;
+            selectAllServers.checked = false;
+        } else if (checkedCheckboxes === totalCheckboxes) {
+            selectAllServers.indeterminate = false;
+            selectAllServers.checked = true;
+        } else {
+            selectAllServers.indeterminate = true;
+            selectAllServers.checked = false;
+        }
+    }
+
+    function updateSelectedServersInfo() {
+        selectedServers = Array.from(serverCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
+        
+        if (selectedServers.length === 0) {
+            selectedServersInfo.textContent = 'No servers selected';
+            loadDeploymentsBtn.disabled = true;
+        } else if (selectedServers.length === 1) {
+            selectedServersInfo.textContent = `Selected: ${selectedServers[0]}`;
+            loadDeploymentsBtn.disabled = false;
+        } else {
+            selectedServersInfo.textContent = `Selected: ${selectedServers.length} servers`;
+            loadDeploymentsBtn.disabled = false;
+        }
+    }
+
+    // Select all functionality
+    selectAllServers.addEventListener('change', () => {
+        const checked = selectAllServers.checked;
+        serverCheckboxes.forEach(cb => {
+            cb.checked = checked;
+        });
+        updateServerRowStyles();
+        updateSelectAllState();
+        updateSelectedServersInfo();
+    });
+
+    // Individual checkbox change handlers
+    serverCheckboxes.forEach(cb => {
+        cb.addEventListener('change', () => {
+            updateServerRowStyles();
+            updateSelectAllState();
+            updateSelectedServersInfo();
+        });
+    });
+
+    // Load deployments button
+    loadDeploymentsBtn.addEventListener('click', async () => {
+        if (selectedServers.length === 0) return;
+        
+        // Clear previous deployments
         deploymentsContainer.innerHTML = '<div class="col-12">Loading...</div>';
+        currentSelection = { app: null, build: null, server: null };
+        selectedInfo.textContent = 'No selection';
+        removeSelectedBtn.disabled = true;
+        removeAppBtn.disabled = true;
+        
         try {
-            const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            const data = await resp.json();
-            renderDeployments(data);
+            if (selectedServers.length === 1) {
+                // Single server - load deployments for that server
+                await loadDeployments(selectedServers[0]);
+            } else {
+                // Multiple servers - show summary
+                await loadMultiServerSummary(selectedServers);
+            }
             status.textContent = 'Loaded';
         } catch (e) {
             deploymentsContainer.innerHTML = `<div class="col-12 text-danger">Error loading: ${e.message}</div>`;
             status.textContent = 'Error';
         }
+    });
+
+    async function loadDeployments(server) {
+        const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        renderDeployments(data, server);
     }
 
-    function renderDeployments(data) {
+    async function loadMultiServerSummary(servers) {
+        deploymentsContainer.innerHTML = '<div class="col-12">Loading multiple servers...</div>';
+        
+        const serverData = [];
+        for (const server of servers) {
+            try {
+                const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    serverData.push({ server, deployments: data });
+                } else {
+                    serverData.push({ server, deployments: [], error: 'Failed to load' });
+                }
+            } catch (e) {
+                serverData.push({ server, deployments: [], error: e.message });
+            }
+        }
+        
+        renderMultiServerSummary(serverData);
+    }
+
+    function renderMultiServerSummary(serverData) {
+        deploymentsContainer.innerHTML = '';
+        
+        serverData.forEach(({ server, deployments, error }) => {
+            const col = document.createElement('div');
+            col.className = 'col-12 mb-3';
+            
+            const card = document.createElement('div');
+            card.className = 'card';
+            
+            if (error) {
+                card.innerHTML = `
+                    <div class="card-header small fw-semibold text-danger">
+                        ${escapeHtml(server)} <span class="badge bg-danger ms-2">Error</span>
+                    </div>
+                    <div class="card-body p-2">
+                        <div class="text-danger small">${escapeHtml(error)}</div>
+                    </div>`;
+            } else {
+                const totalBuilds = deployments.reduce((sum, app) => sum + app.builds.length, 0);
+                card.innerHTML = `
+                    <div class="card-header small fw-semibold">
+                        ${escapeHtml(server)} 
+                        <span class="badge bg-secondary ms-2">${deployments.length} apps</span>
+                        <span class="badge bg-info ms-1">${totalBuilds} builds</span>
+                    </div>
+                    <div class="card-body p-2">
+                        <div class="small">
+                            ${deployments.map(app => `<span class="badge bg-light text-dark me-1">${escapeHtml(app.app)}</span>`).join('')}
+                        </div>
+                    </div>`;
+            }
+            
+            col.appendChild(card);
+            deploymentsContainer.appendChild(col);
+        });
+        
+        if (serverData.length === 0) {
+            deploymentsContainer.innerHTML = '<div class="col-12 text-muted">No deployments found on selected servers.</div>';
+        }
+    }
+
+    function renderDeployments(data, server) {
         deploymentsContainer.innerHTML = '';
         if (!data || data.length === 0) {
             deploymentsContainer.innerHTML = '<div class="col-12 text-muted">No deployments found on this server.</div>';
@@ -141,7 +314,6 @@ document.addEventListener('DOMContentLoaded', () => {
         data.forEach(group => {
             const col = document.createElement('div');
             col.className = 'col-12';
-            // build HTML safely
             const header = document.createElement('div');
             header.className = 'card';
             const inner = `
@@ -149,7 +321,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="card-body p-2" style="max-height:200px;overflow:auto">
                     <ul class="list-group list-group-flush" data-app="${escapeHtml(group.app)}">
                         ${group.builds.map(b => `
-                        <li class="list-group-item d-flex justify-content-between align-items-center build-row" data-app="${escapeHtml(group.app)}" data-build="${escapeHtml(b)}">
+                        <li class="list-group-item d-flex justify-content-between align-items-center build-row" data-app="${escapeHtml(group.app)}" data-build="${escapeHtml(b)}" data-server="${escapeHtml(server)}">
                             <span class="small text-wrap">${escapeHtml(b)}</span>
                             <div>
                                 <button type="button" class="btn btn-sm btn-outline-danger remove-build-btn">Remove</button>
@@ -165,37 +337,31 @@ document.addEventListener('DOMContentLoaded', () => {
         // wire remove buttons (delegated)
         deploymentsContainer.querySelectorAll('.remove-build-btn').forEach(btn => {
             btn.addEventListener('click', (ev) => {
-                ev.preventDefault(); // Prevent any form submission
-                ev.stopPropagation(); // Stop event bubbling
+                ev.preventDefault();
+                ev.stopPropagation();
                 const li = ev.target.closest('.build-row');
                 if (!li) return;
                 
                 const app = li.dataset.app;
                 const build = li.dataset.build;
-                console.log('Build selected:', { app, build });
+                const server = li.dataset.server;
                 
-                currentSelection = { app, build };
-                selectedInfo.textContent = `Selected: ${app} :: ${build}`;
+                currentSelection = { app, build, server };
+                selectedInfo.textContent = `Selected: ${server} :: ${app} :: ${build}`;
                 
-                // Force enable button
                 removeSelectedBtn.disabled = false;
                 removeAppBtn.disabled = false;
-                
-                // Verify state
-                console.log('Selection state after build click:', {
-                    currentServer,
-                    currentSelection,
-                    removeButtonDisabled: removeSelectedBtn.disabled
-                });
             });
         });
 
         // wire clicking on a list group (select app)
         deploymentsContainer.querySelectorAll('[data-app]').forEach(ul => {
-            ul.addEventListener('click', () => {
+            ul.addEventListener('click', (ev) => {
+                if (ev.target.closest('.remove-build-btn')) return; // Don't interfere with remove buttons
+                
                 const app = ul.getAttribute('data-app');
-                currentSelection = { app, build: null };
-                selectedInfo.textContent = `Selected app: ${app}`;
+                currentSelection = { app, build: null, server };
+                selectedInfo.textContent = `Selected app: ${server} :: ${app}`;
                 removeSelectedBtn.disabled = true;
                 removeAppBtn.disabled = false;
             });
@@ -221,13 +387,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     removeSelectedBtn.addEventListener('click', () => {
-        if (!currentServer || !currentSelection.app || !currentSelection.build) return;
-        showConfirm(currentServer, currentSelection.app, currentSelection.build, false);
+        if (!currentSelection.server || !currentSelection.app || !currentSelection.build) return;
+        showConfirm(currentSelection.server, currentSelection.app, currentSelection.build, false);
     });
 
     removeAppBtn.addEventListener('click', () => {
-        if (!currentServer || !currentSelection.app) return;
-        showConfirm(currentServer, currentSelection.app, null, true);
+        if (!currentSelection.server || !currentSelection.app) return;
+        showConfirm(currentSelection.server, currentSelection.app, null, true);
     });
 
     async function postRemove(server, app, build, removeApp) {
@@ -270,7 +436,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             status.textContent = payload.message || 'Removed';
             await loadDeployments(server);
-            currentSelection = { app: null, build: null };
+            currentSelection = { app: null, build: null, server: null };
             selectedInfo.textContent = 'No selection';
             removeSelectedBtn.disabled = true;
             removeAppBtn.disabled = true;
@@ -280,6 +446,11 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('Error removing: ' + e.message);
         }
     }
+
+    // Initialize server states
+    updateServerRowStyles();
+    updateSelectAllState();
+    updateSelectedServersInfo();
 
     function escapeHtml(s) { return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 });
