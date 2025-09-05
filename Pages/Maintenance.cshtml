@@ -7,14 +7,22 @@
 <form id="maintenanceForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
     <div class="row g-4">
+        <!-- Replace the server list section -->
         <div class="col-lg-3">
             <div class="card h-100 shadow-sm">
-                <div class="card-header">Servers</div>
+                <div class="card-header bg-light">
+                    <span class="fw-semibold"><i class="fas fa-server me-2"></i>Servers</span>
+                </div>
                 <div class="card-body p-2">
-                    <div class="list-group" id="serversList">
+                    <div class="list-group list-group-flush" id="serversList">
                         @foreach (var s in Model.Servers)
                         {
-                            <button type="button" class="list-group-item list-group-item-action server-btn" data-server="@s.Value">@s.Text</button>
+                            <button type="button" 
+                                    class="list-group-item list-group-item-action d-flex justify-content-between align-items-center server-btn"
+                                    data-server="@s.Value">
+                                <span class="text-truncate">@s.Text</span>
+                                <i class="fas fa-chevron-right text-muted"></i>
+                            </button>
                         }
                     </div>
                 </div>
@@ -80,9 +88,19 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
     }
 
-    // Server-side configured root (escaped safely)
-    const cstApps = @Html.Raw(JsonSerializer.Serialize(Model.CstApps ?? ""));
+    // Utility function for escaping HTML
+    function escapeHtml(unsafe) {
+        if (unsafe == null) return '';
+        return unsafe
+            .toString()
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
 
+    // Get elements
     const serversList = document.getElementById('serversList');
     const deploymentsContainer = document.getElementById('deploymentsContainer');
     const selectedInfo = document.getElementById('selectedInfo');
@@ -90,46 +108,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const removeAppBtn = document.getElementById('removeAppBtn');
     const status = document.getElementById('maintenanceStatus');
 
+    // Track global state
     let currentServer = null;
-    let currentSelection = { app: null, build: null };
+    let selectedBuilds = new Set();
 
-    // Modal elements
+    // Modal elements - MOVED INSIDE DOMContentLoaded
     const confirmModalEl = document.getElementById('confirmModal');
-    const confirmModal = (typeof bootstrap !== 'undefined' && confirmModalEl) ? new bootstrap.Modal(confirmModalEl) : null;
+    const confirmModal = new bootstrap.Modal(confirmModalEl);
     const confirmPath = document.getElementById('confirmPath');
     const confirmReally = document.getElementById('confirmReally');
     const confirmOk = document.getElementById('confirmOk');
-
-    // Delegate click on server buttons (works even if list is re-rendered)
-    serversList?.addEventListener('click', async (ev) => {
-        const btn = ev.target.closest('.server-btn');
-        if (!btn) return;
-        // toggle active class
-        serversList.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        currentServer = btn.dataset.server;
-        selectedInfo.textContent = `Server: ${currentServer}`;
-        // reset selection UI
-        currentSelection = { app: null, build: null };
-        removeSelectedBtn.disabled = true;
-        removeAppBtn.disabled = true;
-        await loadDeployments(currentServer);
-    });
-
-    async function loadDeployments(server) {
-        deploymentsContainer.innerHTML = '<div class="col-12">Loading...</div>';
-        try {
-            const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            const data = await resp.json();
-            renderDeployments(data);
-            status.textContent = 'Loaded';
-        } catch (e) {
-            deploymentsContainer.innerHTML = `<div class="col-12 text-danger">Error loading: ${e.message}</div>`;
-            status.textContent = 'Error';
-        }
-    }
 
     function renderDeployments(data) {
         deploymentsContainer.innerHTML = '';
@@ -140,148 +128,265 @@ document.addEventListener('DOMContentLoaded', () => {
 
         data.forEach(group => {
             const col = document.createElement('div');
-            col.className = 'col-12';
-            // build HTML safely
+            col.className = 'col-12 mb-3';
+            
+            const card = document.createElement('div');
+            card.className = 'card shadow-sm';
+            
+            // Card header with app name and select all
             const header = document.createElement('div');
-            header.className = 'card';
-            const inner = `
-                <div class="card-header small fw-semibold">${escapeHtml(group.app)} <span class="badge bg-secondary ms-2">${group.builds.length}</span></div>
-                <div class="card-body p-2" style="max-height:200px;overflow:auto">
+            header.className = 'card-header d-flex justify-content-between align-items-center bg-light';
+            header.innerHTML = `
+                <div class="d-flex align-items-center">
+                    <span class="fw-semibold">${escapeHtml(group.app)}</span>
+                    <span class="badge bg-primary ms-2">${group.builds.length}</span>
+                </div>
+                <div class="form-check form-check-inline m-0">
+                    <input type="checkbox" class="form-check-input select-all-builds" 
+                           data-app="${escapeHtml(group.app)}" 
+                           id="selectAll_${escapeHtml(group.app)}" />
+                    <label class="form-check-label small" for="selectAll_${escapeHtml(group.app)}">Select All</label>
+                </div>`;
+        
+            // Card body with builds list
+            const body = document.createElement('div');
+            body.className = 'card-body p-2';
+            body.innerHTML = `
+                <div style="max-height:220px; overflow-y:auto">
                     <ul class="list-group list-group-flush" data-app="${escapeHtml(group.app)}">
-                        ${group.builds.map(b => `
-                        <li class="list-group-item d-flex justify-content-between align-items-center build-row" data-app="${escapeHtml(group.app)}" data-build="${escapeHtml(b)}">
-                            <span class="small text-wrap">${escapeHtml(b)}</span>
-                            <div>
-                                <button type="button" class="btn btn-sm btn-outline-danger remove-build-btn">Remove</button>
-                            </div>
-                        </li>`).join('')}
+                        ${group.builds.map(build => `
+                            <li class="list-group-item py-2 px-3 d-flex justify-content-between align-items-center build-row">
+                                <div class="form-check mb-0">
+                                    <input type="checkbox" class="form-check-input build-checkbox" 
+                                           data-app="${escapeHtml(group.app)}" 
+                                           data-build="${escapeHtml(build)}"
+                                           id="build_${escapeHtml(group.app)}_${escapeHtml(build)}" />
+                                    <label class="form-check-label small text-wrap" for="build_${escapeHtml(group.app)}_${escapeHtml(build)}">
+                                        ${escapeHtml(build)}
+                                    </label>
+                                </div>
+                                <span class="badge bg-light text-dark small">
+                                    ${new Date(group.builds[build]?.created || null).toLocaleDateString() || ''}
+                                </span>
+                            </li>`).join('')}
                     </ul>
                 </div>`;
-            header.innerHTML = inner;
-            col.appendChild(header);
-            deploymentsContainer.appendChild(col);
-        });
 
-        // wire remove buttons (delegated)
-        deploymentsContainer.querySelectorAll('.remove-build-btn').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault(); // Prevent any form submission
-                ev.stopPropagation(); // Stop event bubbling
-                const li = ev.target.closest('.build-row');
-                if (!li) return;
-                
-                const app = li.dataset.app;
-                const build = li.dataset.build;
-                console.log('Build selected:', { app, build });
-                
-                currentSelection = { app, build };
-                selectedInfo.textContent = `Selected: ${app} :: ${build}`;
-                
-                // Force enable button
-                removeSelectedBtn.disabled = false;
-                removeAppBtn.disabled = false;
-                
-                // Verify state
-                console.log('Selection state after build click:', {
-                    currentServer,
-                    currentSelection,
-                    removeButtonDisabled: removeSelectedBtn.disabled
-                });
-            });
-        });
-
-        // wire clicking on a list group (select app)
-        deploymentsContainer.querySelectorAll('[data-app]').forEach(ul => {
-            ul.addEventListener('click', () => {
-                const app = ul.getAttribute('data-app');
-                currentSelection = { app, build: null };
-                selectedInfo.textContent = `Selected app: ${app}`;
-                removeSelectedBtn.disabled = true;
-                removeAppBtn.disabled = false;
-            });
-        });
-    }
-
-    // show confirm modal, build UNC path using server-side CSTApps value
-    function showConfirm(server, app, build, removeApp) {
-        const unc = build
-            ? `\\\\${server}\\C$\\${cstApps}\\${app}\\${build}`
-            : `\\\\${server}\\C$\\${cstApps}\\${app}`;
-
-        confirmPath.textContent = unc;
-        confirmReally.checked = false;
-        confirmOk.disabled = true;
-        confirmModal?.show();
-
-        confirmReally.onchange = () => confirmOk.disabled = !confirmReally.checked;
-        confirmOk.onclick = async () => {
-            confirmModal?.hide();
-            await postRemove(server, app, build, removeApp);
-        };
-    }
-
-    removeSelectedBtn.addEventListener('click', () => {
-        if (!currentServer || !currentSelection.app || !currentSelection.build) return;
-        showConfirm(currentServer, currentSelection.app, currentSelection.build, false);
+        card.appendChild(header);
+        card.appendChild(body);
+        col.appendChild(card);
+        deploymentsContainer.appendChild(col);
     });
 
-    removeAppBtn.addEventListener('click', () => {
-        if (!currentServer || !currentSelection.app) return;
-        showConfirm(currentServer, currentSelection.app, null, true);
-    });
+    function updateBuildSelection(checkbox) {
+        const app = checkbox.dataset.app;
+        const build = checkbox.dataset.build;
+        const key = `${app}|${build}`;
 
+        if (checkbox.checked) {
+            selectedBuilds.add(key);
+        } else {
+            selectedBuilds.delete(key);
+        }
+
+        // Update select-all checkbox state
+        const appCheckboxes = document.querySelectorAll(`.build-checkbox[data-app="${app}"]`);
+        const selectAllCheckbox = document.querySelector(`.select-all-builds[data-app="${app}"]`);
+        if (selectAllCheckbox) {
+            const allChecked = Array.from(appCheckboxes).every(cb => cb.checked);
+            const someChecked = Array.from(appCheckboxes).some(cb => cb.checked);
+            selectAllCheckbox.checked = allChecked;
+            selectAllCheckbox.indeterminate = someChecked && !allChecked;
+        }
+
+        // Update UI
+        removeSelectedBtn.disabled = selectedBuilds.size === 0;
+        selectedInfo.textContent = selectedBuilds.size > 0 
+            ? `Selected: ${selectedBuilds.size} build(s)` 
+            : 'No selection';
+    }
+
+    async function loadDeployments(server) {
+        console.log(`Loading deployments for ${server}...`);
+        status.textContent = 'Loading deployments...';
+
+        try {
+            const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { 
+                cache: 'no-store',
+                headers: { 
+                    'Accept': 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+
+            if (!resp.ok) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
+
+            const data = await resp.json();
+            console.log('Server returned:', data);
+
+            if (data.error) {
+                deploymentsContainer.innerHTML = `
+                    <div class="col-12">
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            ${data.error}
+                            ${data.path ? `<div class="small mt-2 text-muted">${data.path}</div>` : ''}
+                        </div>
+                    </div>`;
+                status.textContent = 'No access';
+                return;
+            }
+
+            if (!Array.isArray(data)) {
+                throw new Error('Invalid data format received');
+            }
+
+            if (data.length === 0) {
+                deploymentsContainer.innerHTML = `
+                    <div class="col-12">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            No deployments found on this server.
+                        </div>
+                    </div>`;
+                status.textContent = 'No deployments';
+                return;
+            }
+
+            renderDeployments(data);
+            status.textContent = `Loaded ${data.length} applications`;
+        } catch (e) {
+            console.error('Failed to load deployments:', e);
+            deploymentsContainer.innerHTML = `
+                <div class="col-12">
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        Error loading deployments: ${e.message}
+                    </div>
+                </div>`;
+            status.textContent = 'Error';
+        }
+    }
+
+    // Function to remove selected builds
+    async function removeSelectedBuilds() {
+        if (selectedBuilds.size === 0) return;
+        
+        status.textContent = `Removing ${selectedBuilds.size} builds...`;
+        let completed = 0;
+        
+        for (const selection of selectedBuilds) {
+            const [app, build] = selection.split('|');
+            try {
+                await postRemove(currentServer, app, build, false);
+                completed++;
+                status.textContent = `Removed ${completed} of ${selectedBuilds.size}...`;
+            } catch (e) {
+                console.error(`Failed to remove ${app}/${build}:`, e);
+            }
+        }
+        
+        // Clear selections and refresh
+        selectedBuilds.clear();
+        await loadDeployments(currentServer);
+        selectedInfo.textContent = 'No selection';
+        removeSelectedBtn.disabled = true;
+        status.textContent = `Completed: ${completed} builds removed`;
+    }
+
+    // Function to make the actual remove request
     async function postRemove(server, app, build, removeApp) {
-        status.textContent = 'Removing...';
-
         const tokenInput = document.querySelector('input[name="__RequestVerificationToken"]');
-        const token = tokenInput ? tokenInput.value : '';
-
+        const token = tokenInput?.value;
+        
         const body = new URLSearchParams();
         body.append('server', server);
         body.append('app', app);
         if (build) body.append('build', build);
         body.append('removeApp', removeApp ? 'true' : 'false');
-
-        try {
-            const resp = await fetch('/Maintenance?handler=Remove', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'RequestVerificationToken': token
-                },
-                body: body.toString()
-            });
-
-            const ct = resp.headers.get('content-type') || '';
-            let payload = null;
-            if (ct.includes('application/json')) {
-                payload = await resp.json();
-            } else {
-                const text = await resp.text();
-                payload = { success: resp.ok, message: text || resp.statusText };
-            }
-
-            if (!resp.ok || !payload || !payload.success) {
-                status.textContent = 'Remove failed';
-                alert('Remove failed: ' + (payload?.message ?? resp.status));
-                console.error('Remove failed', resp.status, payload);
-                return;
-            }
-
-            status.textContent = payload.message || 'Removed';
-            await loadDeployments(server);
-            currentSelection = { app: null, build: null };
-            selectedInfo.textContent = 'No selection';
-            removeSelectedBtn.disabled = true;
-            removeAppBtn.disabled = true;
-        } catch (e) {
-            status.textContent = 'Error';
-            console.error('Remove error', e);
-            alert('Error removing: ' + e.message);
+        
+        const resp = await fetch('/Maintenance?handler=Remove', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'RequestVerificationToken': token
+            },
+            body: body.toString()
+        });
+        
+        const payload = await resp.json();
+        if (!resp.ok || !payload?.success) {
+            throw new Error(payload?.message || `HTTP ${resp.status}`);
         }
+        
+        return payload;
     }
 
-    function escapeHtml(s) { return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-});
+    // Add some style to the page
+    const style = document.createElement('style');
+    style.textContent = `
+        .build-row:hover { background-color: rgba(0,0,0,.02); }
+        .build-checkbox:checked + label { font-weight: 500; color: var(--bs-primary); }
+        .card-header .form-check-input:indeterminate {
+            background-color: var(--bs-primary);
+            border-color: var(--bs-primary);
+        }
+    `;
+    document.head.appendChild(style);
+
+    // Wire up server selection
+    serversList?.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('.server-btn');
+        if (!btn) return;
+
+        currentServer = btn.dataset.server;
+        console.log('Selected server:', currentServer);
+
+        // Update UI
+        serversList.querySelectorAll('.server-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        
+        selectedBuilds.clear();
+        selectedInfo.textContent = `Server: ${currentServer}`;
+        removeSelectedBtn.disabled = true;
+        removeAppBtn.disabled = true;
+
+        await loadDeployments(currentServer);
+    });
+
+    // Handle "Remove Selected Build" button click - MOVED INSIDE DOMContentLoaded
+    removeSelectedBtn.addEventListener('click', () => {
+        if (selectedBuilds.size === 0) return;
+        
+        // Show confirmation modal with paths
+        const paths = Array.from(selectedBuilds).map(sel => {
+            const [app, build] = sel.split('|');
+            return `\\\\${currentServer}\\C$\\CSTApps\\${app}\\${build}`;
+        });
+        
+        confirmPath.innerHTML = paths.map(p => `<div>${escapeHtml(p)}</div>`).join('');
+        confirmReally.checked = false;
+        confirmOk.disabled = true;
+        
+        const confirmMessage = document.getElementById('confirmMessage');
+        confirmMessage.textContent = `This will delete ${paths.length} build(s):`;
+        
+        confirmModal.show();
+    });
+
+    // Handle modal confirmation checkbox - MOVED INSIDE DOMContentLoaded
+    confirmReally.addEventListener('change', () => {
+        confirmOk.disabled = !confirmReally.checked;
+    });
+
+    // Handle modal OK button - MOVED INSIDE DOMContentLoaded
+    confirmOk.addEventListener('click', async () => {
+        confirmModal.hide();
+        await removeSelectedBuilds();
+    });
+
+}); // END of DOMContentLoaded
 </script>
 }
