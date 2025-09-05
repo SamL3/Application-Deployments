@@ -1,0 +1,71 @@
+﻿@model Application_Deployments.Controllers.MaintenanceViewModel
+@using Microsoft.AspNetCore.Mvc.Rendering
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Maintenance</title>
+    <!-- MDBootstrap CSS (via CDN for simplicity, replace with local if using npm) -->
+    <link href="~/lib/mdbpro/css/mdb.min.css" rel="stylesheet" />
+
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">Maintenance</h1>
+
+        @if (!string.IsNullOrEmpty(ModelState[""]?.Errors.FirstOrDefault()?.ErrorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                @ModelState[""]?.Errors.FirstOrDefault()?.ErrorMessage
+            </div>
+        }
+
+        <form asp-action="LoadApps" method="post">
+            <div class="form-group mb-3">
+                <label for="serverSelect">Select Server</label>
+                <select id="serverSelect" class="form-control" asp-for="SelectedServer" asp-items="@(new SelectList(Model.Servers, Model.SelectedServer))" onchange="this.form.submit()">
+                    <option value="">Select a Server</option>
+                </select>
+            </div>
+        </form>
+
+        @if (!string.IsNullOrEmpty(Model.SelectedServer))
+        {
+            <h2>Installed Apps on @Model.SelectedServer</h2>
+            @if (Model.Apps.Any())
+            {
+                <form asp-action="DeleteBuilds" method="post">
+                    <input type="hidden" name="selectedServer" value="@Model.SelectedServer" />
+                    <button type="submit" class="btn btn-danger mb-3" onclick="return confirm('Are you sure you want to delete the selected builds?')" disabled="@(!Model.Apps.Any(a => a.Builds.Any()))">Delete Selected Builds</button>
+                    <ul class="list-group">
+                        @foreach (var app in Model.Apps)
+                        {
+                            <li class="list-group-item">
+                                <strong>@app.Name</strong>
+                                <ul class="list-group mt-2">
+                                    @foreach (var build in app.Builds)
+                                    {
+                                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <input type="checkbox" name="selectedBuilds" value="@Path.Combine(ModelState["LocalBasePath"]?.RawValue?.ToString() ?? "C:\\Deployments\\Servers", Model.SelectedServer, app.Name, build)" />
+                                                @build
+                                            </div>
+                                        </li>
+                                    }
+                                </ul>
+                            </li>
+                        }
+                    </ul>
+                </form>
+            }
+            else
+            {
+                <p>No apps found. Check server logs for errors.</p>
+            }
+        }
+    </div>
+
+    <!-- MDBootstrap JS (via CDN, replace with local if needed) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mdb-ui-kit/6.4.0/mdb.min.js"></script>
+</body>
+</html>
