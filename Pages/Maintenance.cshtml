@@ -2,591 +2,482 @@
 @model ApplicationDeployment.Pages.MaintenanceModel
 @using System.Text.Json
 
-<h1 class="mb-3">Maintenance — Deployed Applications</h1>
+<h1 class="mb-3">Maintenance — Configuration Settings</h1>
 
-<form id="maintenanceForm" onsubmit="return false;">
+<form id="configForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
+    
     <div class="row g-4">
-        <div class="col-lg-3">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header">Servers</div>
-                <div class="card-body p-2">
+        <!-- Staging Path Configuration -->
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">Staging Path Configuration</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label for="stagingPath" class="form-label">
+                            Staging Path Location <span class="text-danger">*</span>
+                        </label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="stagingPath" 
+                                   value="@Model.StagingPath" placeholder="\\server\share\path\" required />
+                            <button type="button" class="btn btn-outline-secondary" id="testStagingPathBtn">Test</button>
+                            <button type="button" class="btn btn-success" id="saveStagingPath">Save</button>
+                        </div>
+                        <div class="invalid-feedback" id="stagingPathError"></div>
+                        <div class="form-text">UNC path to the builds staging directory (e.g., \\server\c$\builds\)</div>
+                        <div id="stagingPathStatus" class="mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Server List Configuration -->
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Server List</h5>
+                    <div>
+                        <button type="button" class="btn btn-light btn-sm" id="addServerBtn">Add Server</button>
+                        <button type="button" class="btn btn-success btn-sm" id="saveServersBtn">Save All</button>
+                    </div>
+                </div>
+                <div class="card-body">
                     <div class="table-responsive" style="max-height:400px; overflow:auto;">
-                        <table class="table table-sm table-hover mb-2">
+                        <table class="table table-sm table-hover">
                             <thead class="table-light sticky-top">
                                 <tr>
-                                    <th scope="col">
-                                        <input type="checkbox" id="selectAllServers" class="form-check-input" title="Select All">
-                                    </th>
-                                    <th scope="col">Host</th>
-                                    <th scope="col">User</th>
-                                    <th scope="col">Description</th>
+                                    <th>Host Name <span class="text-danger">*</span></th>
+                                    <th>User ID</th>
+                                    <th>Description</th>
+                                    <th style="width:120px;">Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="serversTableBody">
                                 @foreach (var server in Model.ServerList)
                                 {
-                                    <tr class="server-row" data-hostname="@server.HostName">
+                                    <tr data-hostname="@server.HostName" class="server-edit-row">
                                         <td>
-                                            <input type="checkbox" class="form-check-input server-checkbox" 
-                                                   value="@server.HostName" 
-                                                   id="server_@server.HostName">
+                                            <input type="text" class="form-control form-control-sm server-hostname" 
+                                                   value="@server.HostName" data-field="hostname" required />
+                                            <div class="invalid-feedback"></div>
                                         </td>
-                                        <td class="fw-semibold">@server.HostName</td>
-                                        <td class="small text-muted">@server.UserID</td>
-                                        <td class="small">@server.Description</td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm" 
+                                                   value="@server.UserID" data-field="userid" />
+                                        </td>
+                                        <td>
+                                            <input type="text" class="form-control form-control-sm" 
+                                                   value="@server.Description" data-field="description" />
+                                        </td>
+                                        <td>
+                                            <button type="button" class="btn btn-outline-primary btn-sm test-server-btn" title="Test Connection">
+                                                Test
+                                            </button>
+                                            <button type="button" class="btn btn-outline-danger btn-sm delete-server-btn" title="Delete">
+                                                Del
+                                            </button>
+                                        </td>
                                     </tr>
                                 }
                             </tbody>
                         </table>
                     </div>
-                    <div id="selectedServersInfo" class="small text-muted mt-2">No servers selected</div>
                 </div>
             </div>
         </div>
 
+        <!-- App Executables Configuration -->
         <div class="col-lg-6">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <span>Deployments on Selected Servers</span>
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Application Executables</h5>
                     <div>
-                        <button type="button" id="selectAllBuilds" class="btn btn-sm btn-outline-secondary me-2" disabled>Select All Builds</button>
-                        <button type="button" id="removeSelectedBuildsBtn" class="btn btn-sm btn-danger" disabled>Remove Selected Builds</button>
+                        <button type="button" class="btn btn-dark btn-sm" id="addAppBtn">Add App</button>
+                        <button type="button" class="btn btn-success btn-sm" id="saveAppsBtn">Save All</button>
                     </div>
                 </div>
-                <div class="card-body p-2" style="max-height:70vh; overflow:auto;">
-                    <div id="deploymentsContainer" class="row g-3">
-                        <div class="col-12 text-muted">Select server(s) to view deployments.</div>
+                <div class="card-body">
+                    <div class="table-responsive" style="max-height:400px; overflow:auto;">
+                        <table class="table table-sm table-hover">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>App Name <span class="text-danger">*</span></th>
+                                    <th>Executable Path <span class="text-danger">*</span></th>
+                                    <th style="width:80px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="appsTableBody">
+                                @foreach (var app in Model.AppExes)
+                                {
+                                    <tr data-appname="@app.Key">
+                                        <td><input type="text" class="form-control form-control-sm" value="@app.Key" data-field="appname" required /></td>
+                                        <td><input type="text" class="form-control form-control-sm" value="@app.Value" data-field="exepath" required /></td>
+                                        <td>
+                                            <button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Delete</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
         </div>
+    </div>
 
-        <div class="col-lg-3">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header">Actions</div>
-                <div class="card-body d-flex flex-column">
-                    <div id="selectedInfo" class="mb-3 small text-muted">No selection</div>
-                    <button type="button" id="loadDeploymentsBtn" class="btn btn-primary mb-2" disabled>Load Deployments</button>
-                    <button type="button" id="refreshDeploymentsBtn" class="btn btn-outline-secondary mb-2" disabled>Refresh</button>
-                    <div id="maintenanceStatus" class="small text-muted mt-auto">Ready</div>
+    <!-- Configuration Status -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Configuration Status</h6>
+                    <div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportConfiguration()">
+                            Export Config
+                        </button>
+                        <input type="file" id="importConfig" accept=".json" style="display:none;" onchange="importConfiguration(event)" />
+                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="document.getElementById('importConfig').click()">
+                            Import Config
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="statusArea" class="alert alert-info d-none" role="alert">
+                        <div class="d-flex align-items-center">
+                            <div class="spinner-border spinner-border-sm me-2 d-none" id="statusSpinner"></div>
+                            <span id="statusMessage">Ready</span>
+                        </div>
+                    </div>
+                    <div class="row text-center">
+                        <div class="col-4">
+                            <div class="border-end">
+                                <div class="h4 mb-0" id="serverCount">@Model.ServerList.Count</div>
+                                <small class="text-muted">Servers</small>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="border-end">
+                                <div class="h4 mb-0" id="appCount">@Model.AppExes.Count</div>
+                                <small class="text-muted">Applications</small>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="h4 mb-0" id="configStatus">
+                                @(string.IsNullOrEmpty(Model.StagingPath) ? "??" : "?")
+                            </div>
+                            <small class="text-muted">Config Status</small>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 </form>
 
-<!-- Confirmation modal (Bootstrap) -->
-<div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Confirm Remove</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <div class="modal-body">
-        <p id="confirmMessage">This will permanently delete the following builds:</p>
-        <div id="confirmBuildsList" class="small bg-light p-2 rounded mb-3" style="max-height:200px; overflow:auto;"></div>
-        <div class="form-check">
-            <input class="form-check-input" type="checkbox" id="confirmReally" />
-            <label class="form-check-label" for="confirmReally">I understand this will permanently delete the selected build folders.</label>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button type="button" id="confirmCancel" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" id="confirmOk" class="btn btn-danger" disabled>Delete</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 @section Scripts {
 <style>
-    .server-row:hover { background-color: rgba(0,123,255,0.1); }
-    .server-row.selected { background-color: rgba(0,123,255,0.2); }
-    .build-row:hover { background-color: rgba(0,123,255,0.05); }
-    .build-row.selected { background-color: rgba(0,123,255,0.15); }
     .sticky-top { position: sticky; top: 0; z-index: 10; }
-    .app-card { margin-bottom: 1rem; }
-    .builds-table { font-size: 0.875rem; }
-    .builds-table td { padding: 0.375rem 0.5rem; }
+    .table input.form-control-sm { border: 1px solid #ced4da; }
+    .table input.form-control-sm:focus { border-color: #86b7fe; box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25); }
 </style>
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    // Add error handling for Bootstrap
-    if (typeof bootstrap === 'undefined') {
-        console.error('Bootstrap not loaded');
-        alert('Error: Bootstrap library not loaded. Please refresh the page.');
-        return;
+    const statusArea = document.getElementById('statusArea');
+    const statusMessage = document.getElementById('statusMessage');
+    
+    function showStatus(message, type = 'info') {
+        statusArea.className = `alert alert-${type}`;
+        statusMessage.textContent = message;
+        statusArea.classList.remove('d-none');
+        setTimeout(() => statusArea.classList.add('d-none'), 3000);
     }
 
-    // Server-side configured root (escaped safely)
-    const cstApps = @Html.Raw(JsonSerializer.Serialize(Model.CstApps ?? ""));
-
-    const serverCheckboxes = document.querySelectorAll('.server-checkbox');
-    const selectAllServers = document.getElementById('selectAllServers');
-    const selectedServersInfo = document.getElementById('selectedServersInfo');
-    const loadDeploymentsBtn = document.getElementById('loadDeploymentsBtn');
-    const refreshDeploymentsBtn = document.getElementById('refreshDeploymentsBtn');
-    const selectAllBuilds = document.getElementById('selectAllBuilds');
-    const removeSelectedBuildsBtn = document.getElementById('removeSelectedBuildsBtn');
-    const deploymentsContainer = document.getElementById('deploymentsContainer');
-    const selectedInfo = document.getElementById('selectedInfo');
-    const status = document.getElementById('maintenanceStatus');
-
-    let selectedServers = [];
-    let currentServer = null;
-
-    // Modal elements
-    const confirmModalEl = document.getElementById('confirmModal');
-    const confirmModal = (typeof bootstrap !== 'undefined' && confirmModalEl) ? new bootstrap.Modal(confirmModalEl) : null;
-    const confirmBuildsList = document.getElementById('confirmBuildsList');
-    const confirmReally = document.getElementById('confirmReally');
-    const confirmOk = document.getElementById('confirmOk');
-
-    // Server row selection (full row click)
-    document.querySelectorAll('.server-row').forEach(row => {
-        row.addEventListener('click', (e) => {
-            if (e.target.type === 'checkbox') return; // Don't interfere with checkbox clicks
-            
-            const checkbox = row.querySelector('.server-checkbox');
-            checkbox.checked = !checkbox.checked;
-            checkbox.dispatchEvent(new Event('change'));
-        });
-    });
-
-    // Server checkbox handling
-    function updateServerRowStyles() {
-        serverCheckboxes.forEach(cb => {
-            const row = cb.closest('.server-row');
-            if (cb.checked) {
-                row.classList.add('selected');
-            } else {
-                row.classList.remove('selected');
-            }
-        });
-    }
-
-    function updateSelectAllState() {
-        const totalCheckboxes = serverCheckboxes.length;
-        const checkedCheckboxes = Array.from(serverCheckboxes).filter(cb => cb.checked).length;
+    // Staging Path Save
+    document.getElementById('saveStagingPath').addEventListener('click', async () => {
+        const stagingPath = document.getElementById('stagingPath').value;
         
-        if (checkedCheckboxes === 0) {
-            selectAllServers.indeterminate = false;
-            selectAllServers.checked = false;
-        } else if (checkedCheckboxes === totalCheckboxes) {
-            selectAllServers.indeterminate = false;
-            selectAllServers.checked = true;
-        } else {
-            selectAllServers.indeterminate = true;
-            selectAllServers.checked = false;
-        }
-    }
-
-    function updateSelectedServersInfo() {
-        selectedServers = Array.from(serverCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
-        
-        if (selectedServers.length === 0) {
-            selectedServersInfo.textContent = 'No servers selected';
-            loadDeploymentsBtn.disabled = true;
-            refreshDeploymentsBtn.disabled = true;
-        } else if (selectedServers.length === 1) {
-            selectedServersInfo.textContent = `Selected: ${selectedServers[0]}`;
-            loadDeploymentsBtn.disabled = false;
-            refreshDeploymentsBtn.disabled = false;
-        } else {
-            selectedServersInfo.textContent = `Selected: ${selectedServers.length} servers`;
-            loadDeploymentsBtn.disabled = false;
-            refreshDeploymentsBtn.disabled = true; // Disable refresh for multiple servers
-        }
-    }
-
-    // Select all functionality
-    selectAllServers.addEventListener('change', () => {
-        const checked = selectAllServers.checked;
-        serverCheckboxes.forEach(cb => {
-            cb.checked = checked;
-        });
-        updateServerRowStyles();
-        updateSelectAllState();
-        updateSelectedServersInfo();
-    });
-
-    // Individual checkbox change handlers
-    serverCheckboxes.forEach(cb => {
-        cb.addEventListener('change', () => {
-            updateServerRowStyles();
-            updateSelectAllState();
-            updateSelectedServersInfo();
-        });
-    });
-
-    // Load deployments button
-    loadDeploymentsBtn.addEventListener('click', async () => {
-        if (selectedServers.length === 0) return;
-        
-        // Clear previous deployments
-        deploymentsContainer.innerHTML = '<div class="col-12">Loading...</div>';
-        selectedInfo.textContent = 'No selection';
-        selectAllBuilds.disabled = true;
-        removeSelectedBuildsBtn.disabled = true;
-        
-        try {
-            if (selectedServers.length === 1) {
-                // Single server - load deployments for that server
-                currentServer = selectedServers[0];
-                await loadDeployments(currentServer);
-            } else {
-                // Multiple servers - show summary
-                currentServer = null;
-                await loadMultiServerSummary(selectedServers);
-            }
-            status.textContent = 'Loaded';
-        } catch (e) {
-            deploymentsContainer.innerHTML = `<div class="col-12 text-danger">Error loading: ${e.message}</div>`;
-            status.textContent = 'Error';
-        }
-    });
-
-    // Refresh deployments button
-    refreshDeploymentsBtn.addEventListener('click', async () => {
-        if (currentServer) {
-            await loadDeployments(currentServer);
-        }
-    });
-
-    async function loadDeployments(server) {
-        const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        const data = await resp.json();
-        renderDeploymentsCards(data, server);
-    }
-
-    async function loadMultiServerSummary(servers) {
-        deploymentsContainer.innerHTML = '<div class="col-12">Loading multiple servers...</div>';
-        
-        const serverData = [];
-        for (const server of servers) {
-            try {
-                const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    serverData.push({ server, deployments: data });
-                } else {
-                    serverData.push({ server, deployments: [], error: 'Failed to load' });
-                }
-            } catch (e) {
-                serverData.push({ server, deployments: [], error: e.message });
-            }
-        }
-        
-        renderMultiServerSummary(serverData);
-    }
-
-    function renderMultiServerSummary(serverData) {
-        deploymentsContainer.innerHTML = '';
-        
-        serverData.forEach(({ server, deployments, error }) => {
-            const col = document.createElement('div');
-            col.className = 'col-12 mb-3';
-            
-            const card = document.createElement('div');
-            card.className = 'card';
-            
-            if (error) {
-                card.innerHTML = `
-                    <div class="card-header small fw-semibold text-danger">
-                        ${escapeHtml(server)} <span class="badge bg-danger ms-2">Error</span>
-                    </div>
-                    <div class="card-body p-2">
-                        <div class="text-danger small">${escapeHtml(error)}</div>
-                    </div>`;
-            } else {
-                const totalBuilds = deployments.reduce((sum, app) => sum + app.buildCount, 0);
-                card.innerHTML = `
-                    <div class="card-header small fw-semibold">
-                        ${escapeHtml(server)} 
-                        <span class="badge bg-secondary ms-2">${deployments.length} apps</span>
-                        <span class="badge bg-info ms-1">${totalBuilds} builds</span>
-                    </div>
-                    <div class="card-body p-2">
-                        <div class="small">
-                            ${deployments.map(app => `<span class="badge bg-light text-dark me-1">${escapeHtml(app.app)} (${app.buildCount})</span>`).join('')}
-                        </div>
-                    </div>`;
-            }
-            
-            col.appendChild(card);
-            deploymentsContainer.appendChild(col);
-        });
-        
-        if (serverData.length === 0) {
-            deploymentsContainer.innerHTML = '<div class="col-12 text-muted">No deployments found on selected servers.</div>';
-        }
-    }
-
-    function renderDeploymentsCards(data, server) {
-        deploymentsContainer.innerHTML = '';
-        
-        if (!data || data.length === 0) {
-            deploymentsContainer.innerHTML = '<div class="col-12 text-muted">No deployments found on this server.</div>';
-            selectAllBuilds.disabled = true;
-            removeSelectedBuildsBtn.disabled = true;
+        const validation = validateStagingPath(stagingPath);
+        if (!validation.valid) {
+            showStatus(validation.message, 'danger');
             return;
         }
-
-        // Create cards for each application
-        data.forEach(app => {
-            const col = document.createElement('div');
-            col.className = 'col-12 app-card';
-            
-            const cardHTML = `
-                <div class="card">
-                    <div class="card-header small fw-semibold d-flex justify-content-between align-items-center">
-                        <span>${escapeHtml(app.app)}</span>
-                        <span class="badge bg-secondary">${app.buildCount} builds</span>
-                    </div>
-                    <div class="card-body p-0">
-                        ${app.builds.length > 0 ? `
-                            <table class="table table-sm table-hover builds-table mb-0">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th scope="col" style="width: 50px;">
-                                            <input type="checkbox" class="form-check-input app-select-all" 
-                                                   data-app="${escapeHtml(app.app)}" title="Select All Builds for ${escapeHtml(app.app)}">
-                                        </th>
-                                        <th scope="col">Build Name</th>
-                                        <th scope="col" style="width: 100px;">Size</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${app.builds.map(build => `
-                                        <tr class="build-row" data-app="${escapeHtml(app.app)}" data-build="${escapeHtml(build.name)}" data-server="${escapeHtml(server)}">
-                                            <td>
-                                                <input type="checkbox" class="form-check-input build-checkbox" 
-                                                       value="${escapeHtml(app.app)}|${escapeHtml(build.name)}" 
-                                                       data-app="${escapeHtml(app.app)}"
-                                                       id="build_${escapeHtml(app.app)}_${escapeHtml(build.name)}">
-                                            </td>
-                                            <td class="text-wrap">${escapeHtml(build.name)}</td>
-                                            <td class="text-end">${build.sizeMB.toFixed(2)} MB</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        ` : `
-                            <div class="p-3 text-muted small">No builds found for this application.</div>
-                        `}
-                    </div>
-                </div>
-            `;
-            
-            col.innerHTML = cardHTML;
-            deploymentsContainer.appendChild(col);
-        });
         
-        // Enable controls
-        selectAllBuilds.disabled = false;
-        
-        // Wire up build selection events - get fresh references each time
-        wireUpBuildEvents();
-    }
-
-    function wireUpBuildEvents() {
-        const buildCheckboxes = document.querySelectorAll('.build-checkbox');
-        const appSelectAllCheckboxes = document.querySelectorAll('.app-select-all');
-        
-        // Build row selection (full row click)
-        document.querySelectorAll('.build-row').forEach(row => {
-            row.addEventListener('click', (e) => {
-                if (e.target.type === 'checkbox') return; // Don't interfere with checkbox clicks
-                
-                const checkbox = row.querySelector('.build-checkbox');
-                checkbox.checked = !checkbox.checked;
-                checkbox.dispatchEvent(new Event('change'));
-            });
-        });
-
-        // Build checkbox handling
-        function updateBuildRowStyles() {
-            buildCheckboxes.forEach(cb => {
-                const row = cb.closest('.build-row');
-                if (cb.checked) {
-                    row.classList.add('selected');
-                } else {
-                    row.classList.remove('selected');
-                }
-            });
-        }
-
-        function updateAppSelectAllStates() {
-            appSelectAllCheckboxes.forEach(appCheckbox => {
-                const appName = appCheckbox.getAttribute('data-app');
-                const appBuilds = Array.from(buildCheckboxes).filter(cb => cb.getAttribute('data-app') === appName);
-                const checkedAppBuilds = appBuilds.filter(cb => cb.checked);
-                
-                if (checkedAppBuilds.length === 0) {
-                    appCheckbox.indeterminate = false;
-                    appCheckbox.checked = false;
-                } else if (checkedAppBuilds.length === appBuilds.length) {
-                    appCheckbox.indeterminate = false;
-                    appCheckbox.checked = true;
-                } else {
-                    appCheckbox.indeterminate = true;
-                    appCheckbox.checked = false;
-                }
-            });
-        }
-
-        function updateRemoveButtonState() {
-            const checkedBuilds = Array.from(buildCheckboxes).filter(cb => cb.checked);
-            removeSelectedBuildsBtn.disabled = checkedBuilds.length === 0;
-            
-            if (checkedBuilds.length > 0) {
-                selectedInfo.textContent = `Selected: ${checkedBuilds.length} build(s) on ${currentServer}`;
-            } else {
-                selectedInfo.textContent = 'No selection';
-            }
-        }
-
-        // App select all functionality
-        appSelectAllCheckboxes.forEach(appCheckbox => {
-            appCheckbox.addEventListener('change', () => {
-                const appName = appCheckbox.getAttribute('data-app');
-                const checked = appCheckbox.checked;
-                const appBuilds = Array.from(buildCheckboxes).filter(cb => cb.getAttribute('data-app') === appName);
-                
-                appBuilds.forEach(cb => {
-                    cb.checked = checked;
-                });
-                
-                updateBuildRowStyles();
-                updateAppSelectAllStates();
-                updateRemoveButtonState();
-            });
-        });
-
-        // Individual build checkbox change handlers
-        buildCheckboxes.forEach(cb => {
-            cb.addEventListener('change', () => {
-                updateBuildRowStyles();
-                updateAppSelectAllStates();
-                updateRemoveButtonState();
-            });
-        });
-
-        // Initialize build states
-        updateBuildRowStyles();
-        updateAppSelectAllStates();
-        updateRemoveButtonState();
-    }
-
-    // Select all builds button (header) - fixed to use fresh selector
-    selectAllBuilds.addEventListener('click', () => {
-        const buildCheckboxes = document.querySelectorAll('.build-checkbox');
-        if (buildCheckboxes.length === 0) return;
-        
-        const allChecked = Array.from(buildCheckboxes).every(cb => cb.checked);
-        
-        buildCheckboxes.forEach(cb => {
-            cb.checked = !allChecked;
-        });
-        
-        // Trigger change events to update UI
-        buildCheckboxes[0].dispatchEvent(new Event('change'));
-    });
-
-    // Remove selected builds button
-    removeSelectedBuildsBtn.addEventListener('click', () => {
-        const checkedBuilds = Array.from(document.querySelectorAll('.build-checkbox:checked'));
-        if (checkedBuilds.length === 0 || !currentServer) return;
-        
-        const buildIdentifiers = checkedBuilds.map(cb => cb.value);
-        showConfirmModal(currentServer, buildIdentifiers);
-    });
-
-    // Show confirmation modal
-    function showConfirmModal(server, buildIdentifiers) {
-        const buildsList = buildIdentifiers.map(id => {
-            const parts = id.split('|');
-            return `\\\\${server}\\C$\\${cstApps}\\${parts[0]}\\${parts[1]}`;
-        }).join('\n');
-        
-        confirmBuildsList.textContent = buildsList;
-        confirmReally.checked = false;
-        confirmOk.disabled = true;
-        confirmModal?.show();
-
-        confirmReally.onchange = () => confirmOk.disabled = !confirmReally.checked;
-        confirmOk.onclick = async () => {
-            confirmModal?.hide();
-            await postRemoveMultipleBuilds(server, buildIdentifiers);
-        };
-    }
-
-    async function postRemoveMultipleBuilds(server, buildIdentifiers) {
-        status.textContent = 'Removing builds...';
-
-        const tokenInput = document.querySelector('input[name="__RequestVerificationToken"]');
-        const token = tokenInput ? tokenInput.value : '';
-
-        const body = new URLSearchParams();
-        body.append('server', server);
-        buildIdentifiers.forEach(id => body.append('selectedBuilds', id));
-
         try {
-            const resp = await fetch('/Maintenance?handler=RemoveMultipleBuilds', {
+            const response = await fetch('/Maintenance?handler=SaveStagingPath', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
-                    'RequestVerificationToken': token
+                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]').value
                 },
-                body: body.toString()
+                body: new URLSearchParams({ stagingPath })
             });
+            
+            const result = await response.json();
+            showStatus(result.message, result.success ? 'success' : 'danger');
+        } catch (error) {
+            showStatus('Error saving staging path: ' + error.message, 'danger');
+        }
+    });
 
-            const ct = resp.headers.get('content-type') || '';
-            let payload = null;
-            if (ct.includes('application/json')) {
-                payload = await resp.json();
-            } else {
-                const text = await resp.text();
-                payload = { success: resp.ok, message: text || resp.statusText };
+    // Add Server
+    document.getElementById('addServerBtn').addEventListener('click', () => {
+        const tbody = document.getElementById('serversTableBody');
+        const newRow = document.createElement('tr');
+        newRow.className = 'server-edit-row';
+        newRow.innerHTML = `
+            <td>
+                <input type="text" class="form-control form-control-sm server-hostname" data-field="hostname" placeholder="Server name" required />
+                <div class="invalid-feedback"></div>
+            </td>
+            <td><input type="text" class="form-control form-control-sm" data-field="userid" placeholder="User ID" /></td>
+            <td><input type="text" class="form-control form-control-sm" data-field="description" placeholder="Description" /></td>
+            <td>
+                <button type="button" class="btn btn-outline-primary btn-sm test-server-btn">Test</button>
+                <button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button>
+            </td>
+        `;
+        tbody.appendChild(newRow);
+    });
+
+    // Delete Server
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('delete-server-btn')) {
+            e.target.closest('tr').remove();
+        }
+    });
+
+    // Save Servers
+    document.getElementById('saveServersBtn').addEventListener('click', async () => {
+        const servers = [];
+        document.querySelectorAll('#serversTableBody tr').forEach(row => {
+            const hostname = row.querySelector('[data-field="hostname"]').value.trim();
+            const userid = row.querySelector('[data-field="userid"]').value.trim();
+            const description = row.querySelector('[data-field="description"]').value.trim();
+            
+            if (hostname) {
+                const validation = validateServerData(hostname, userid, description);
+                if (!validation.valid) {
+                    showStatus(`Server ${hostname}: ${validation.message}`, 'danger');
+                    return;
+                }
+                servers.push({ hostname, userid, description });
             }
+        });
 
-            if (!resp.ok || !payload || !payload.success) {
-                status.textContent = 'Remove failed';
-                alert('Remove failed: ' + (payload?.message ?? resp.status));
-                console.error('Remove failed', resp.status, payload);
+        try {
+            const response = await fetch('/Maintenance?handler=SaveServers', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]').value
+                },
+                body: JSON.stringify({ servers })
+            });
+            
+            const result = await response.json();
+            showStatus(result.message, result.success ? 'success' : 'danger');
+            if (result.success) {
+                document.getElementById('serverCount').textContent = servers.length;
+            }
+        } catch (error) {
+            showStatus('Error saving servers: ' + error.message, 'danger');
+        }
+    });
+
+    // Add App
+    document.getElementById('addAppBtn').addEventListener('click', () => {
+        const tbody = document.getElementById('appsTableBody');
+        const newRow = document.createElement('tr');
+        newRow.innerHTML = `
+            <td><input type="text" class="form-control form-control-sm" data-field="appname" placeholder="App Name" required /></td>
+            <td><input type="text" class="form-control form-control-sm" data-field="exepath" placeholder="path\\to\\executable.exe" required /></td>
+            <td><button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Delete</button></td>
+        `;
+        tbody.appendChild(newRow);
+    });
+
+    // Delete App
+    document.addEventListener('click', (e) => {
+        if (e.target.classList.contains('delete-app-btn')) {
+            e.target.closest('tr').remove();
+        }
+    });
+
+    // Save Apps
+    document.getElementById('saveAppsBtn').addEventListener('click', async () => {
+        const apps = {};
+        document.querySelectorAll('#appsTableBody tr').forEach(row => {
+            const appname = row.querySelector('[data-field="appname"]').value.trim();
+            const exepath = row.querySelector('[data-field="exepath"]').value.trim();
+            
+            if (appname && exepath) {
+                const validation = validateAppData(appname, exepath);
+                if (!validation.valid) {
+                    showStatus(`App ${appname}: ${validation.message}`, 'danger');
+                    return;
+                }
+                apps[appname] = exepath;
+            }
+        });
+
+        try {
+            const response = await fetch('/Maintenance?handler=SaveApps', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]').value
+                },
+                body: JSON.stringify({ apps })
+            });
+            
+            const result = await response.json();
+            showStatus(result.message, result.success ? 'success' : 'danger');
+            if (result.success) {
+                document.getElementById('appCount').textContent = Object.keys(apps).length;
+            }
+        } catch (error) {
+            showStatus('Error saving apps: ' + error.message, 'danger');
+        }
+    });
+
+    // Test Server Connection
+    document.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('test-server-btn')) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const row = e.target.closest('.server-edit-row');
+            const hostnameInput = row.querySelector('[data-field="hostname"]');
+            const hostname = hostnameInput.value.trim();
+            
+            if (!hostname) {
+                showStatus('Please enter a hostname first', 'warning');
                 return;
             }
-
-            status.textContent = payload.message || 'Removed';
             
-            // Show detailed results if available
-            if (payload.results && payload.results.length > 0) {
-                const failedResults = payload.results.filter(r => !r.success);
-                if (failedResults.length > 0) {
-                    console.warn('Some removals failed:', failedResults);
-                }
+            try {
+                const response = await fetch(`/Maintenance?handler=TestServer&hostname=${encodeURIComponent(hostname)}`);
+                const result = await response.json();
+                showStatus(`${hostname}: ${result.message}`, result.success ? 'success' : 'danger');
+            } catch (error) {
+                showStatus(`Error testing ${hostname}: ${error.message}`, 'danger');
             }
-
-            // Refresh the deployments view
-            await loadDeployments(server);
-            selectedInfo.textContent = 'No selection';
-        } catch (e) {
-            status.textContent = 'Error';
-            console.error('Remove error', e);
-            alert('Error removing: ' + e.message);
         }
+    });
+
+    // Validation functions
+    function validateStagingPath(path) {
+        if (!path.trim()) return { valid: false, message: 'Staging path cannot be empty' };
+        if (!path.match(/^\\\\[\w.-]+\\[a-zA-Z$][\w$]*\\/)) return { valid: false, message: 'Invalid UNC path format' };
+        return { valid: true, message: '' };
     }
 
-    // Initialize server states
-    updateServerRowStyles();
-    updateSelectAllState();
-    updateSelectedServersInfo();
+    function validateServerData(hostname, userid, description) {
+        if (!hostname.trim()) return { valid: false, message: 'Hostname is required' };
+        if (hostname.match(/[\\/:*?"<>|]/)) return { valid: false, message: 'Invalid characters in hostname' };
+        if (userid && userid.length > 50) return { valid: false, message: 'User ID too long' };
+        return { valid: true, message: '' };
+    }
 
-    function escapeHtml(s) { return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function validateAppData(appname, exepath) {
+        if (!appname.trim()) return { valid: false, message: 'App name is required' };
+        if (!exepath.trim()) return { valid: false, message: 'Executable path is required' };
+        if (!exepath.toLowerCase().endsWith('.exe')) return { valid: false, message: 'Executable must end with .exe' };
+        return { valid: true, message: '' };
+    }
+
+    // Export/Import Configuration
+    window.exportConfiguration = function() {
+        const servers = [];
+        document.querySelectorAll('#serversTableBody tr').forEach(row => {
+            const hostname = row.querySelector('[data-field="hostname"]').value.trim();
+            const userid = row.querySelector('[data-field="userid"]').value.trim();
+            const description = row.querySelector('[data-field="description"]').value.trim();
+            if (hostname) servers.push({ hostname, userid, description });
+        });
+
+        const apps = {};
+        document.querySelectorAll('#appsTableBody tr').forEach(row => {
+            const appname = row.querySelector('[data-field="appname"]').value.trim();
+            const exepath = row.querySelector('[data-field="exepath"]').value.trim();
+            if (appname && exepath) apps[appname] = exepath;
+        });
+
+        const config = {
+            stagingPath: document.getElementById('stagingPath').value,
+            servers: servers,
+            apps: apps,
+            exportDate: new Date().toISOString()
+        };
+        
+        const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `maintenance-config-${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    window.importConfiguration = function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const config = JSON.parse(e.target.result);
+                
+                // Apply staging path
+                if (config.stagingPath) {
+                    document.getElementById('stagingPath').value = config.stagingPath;
+                }
+                
+                // Apply servers
+                if (config.servers) {
+                    const tbody = document.getElementById('serversTableBody');
+                    tbody.innerHTML = '';
+                    config.servers.forEach(server => {
+                        const row = document.createElement('tr');
+                        row.className = 'server-edit-row';
+                        row.innerHTML = `
+                            <td><input type="text" class="form-control form-control-sm server-hostname" value="${server.hostname || ''}" data-field="hostname" required /></td>
+                            <td><input type="text" class="form-control form-control-sm" value="${server.userid || ''}" data-field="userid" /></td>
+                            <td><input type="text" class="form-control form-control-sm" value="${server.description || ''}" data-field="description" /></td>
+                            <td>
+                                <button type="button" class="btn btn-outline-primary btn-sm test-server-btn">Test</button>
+                                <button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                }
+                
+                // Apply apps
+                if (config.apps) {
+                    const tbody = document.getElementById('appsTableBody');
+                    tbody.innerHTML = '';
+                    Object.entries(config.apps).forEach(([appname, exepath]) => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td><input type="text" class="form-control form-control-sm" value="${appname}" data-field="appname" required /></td>
+                            <td><input type="text" class="form-control form-control-sm" value="${exepath}" data-field="exepath" required /></td>
+                            <td><button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Delete</button></td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                }
+                
+                showStatus('Configuration imported successfully', 'success');
+            } catch (error) {
+                showStatus('Error importing configuration: ' + error.message, 'danger');
+            }
+        };
+        reader.readAsText(file);
+    };
 });
 </script>
 }

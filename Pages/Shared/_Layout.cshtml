@@ -12,7 +12,7 @@
     <header>
         <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom mb-3">
             <div class="container">
-                <a class="navbar-brand" asp-area="" asp-page="/Index">Application_Deployments</a>
+                <a class="navbar-brand" asp-area="" asp-page="/Deploy">Application_Deployments</a>
                 <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
                         aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
                     <span class="navbar-toggler-icon"></span>
@@ -21,10 +21,13 @@
                 <div class="collapse navbar-collapse" id="mainNav">
                     <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                         <li class="nav-item">
-                            <a class="nav-link" asp-area="" asp-page="/Index">Home</a>
+                            <a class="nav-link" asp-area="" asp-page="/Deploy">Deploy</a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" asp-area="" asp-page="/Dashboard">Dashboard</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" asp-area="" asp-page="/Remove">Remove</a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" asp-area="" asp-page="/Maintenance">Maintenance</a>
@@ -56,127 +59,5 @@
     <script src="~/lib/mdbpro/js/mdb.umd.min.js"></script>
     <script src="~/js/site.js" asp-append-version="true"></script>
     @await RenderSectionAsync("Scripts", required: false)
-
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            // Initialize modal properly
-            const confirmModalEl = document.getElementById('confirmModal');
-            let confirmModal = null;
-            if (confirmModalEl) {
-                confirmModal = new bootstrap.Modal(confirmModalEl, {
-                    keyboard: false,
-                    backdrop: 'static'
-                });
-            }
-
-            // Debug logging for selection state
-            function logSelectionState() {
-                console.log('Current selection state:', {
-                    server: currentServer,
-                    app: currentSelection?.app,
-                    build: currentSelection?.build
-                });
-            }
-
-            // Update the showConfirm function
-            function showConfirm(server, app, build, removeApp) {
-                console.log('showConfirm called with:', { server, app, build, removeApp });
-
-                if (!confirmModal) {
-                    console.error('Modal not initialized');
-                    return;
-                }
-
-                const unc = build
-                    ? `\\\\${server}\\C$\\${cstApps}\\${app}\\${build}`
-                    : `\\\\${server}\\C$\\${cstApps}\\${app}`;
-
-                confirmPath.textContent = unc;
-                confirmReally.checked = false;
-                confirmOk.disabled = true;
-
-                // Remove existing listeners
-                const newConfirmReally = confirmReally.cloneNode(true);
-                const newConfirmOk = confirmOk.cloneNode(true);
-                confirmReally.parentNode.replaceChild(newConfirmReally, confirmReally);
-                confirmOk.parentNode.replaceChild(newConfirmOk, confirmOk);
-
-                // Update references
-                confirmReally = newConfirmReally;
-                confirmOk = newConfirmOk;
-
-                // Add new listeners
-                confirmReally.addEventListener('change', () => {
-                    confirmOk.disabled = !confirmReally.checked;
-                });
-
-                confirmOk.addEventListener('click', async () => {
-                    confirmModal.hide();
-                    await postRemove(server, app, build, removeApp);
-                });
-
-                confirmModal.show();
-            }
-
-            // Update button click handlers
-            removeSelectedBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                logSelectionState();
-
-                if (!currentServer || !currentSelection?.app || !currentSelection?.build) {
-                    console.warn('Invalid selection state for remove build');
-                    alert('Please select a server and build first');
-                    return;
-                }
-
-                console.log('Showing confirm for build removal');
-                showConfirm(currentServer, currentSelection.app, currentSelection.build, false);
-            });
-
-            removeAppBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                logSelectionState();
-
-                if (!currentServer || !currentSelection?.app) {
-                    console.warn('Invalid selection state for remove app');
-                    alert('Please select a server and app first');
-                    return;
-                }
-
-                console.log('Showing confirm for app removal');
-                showConfirm(currentServer, currentSelection.app, null, true);
-            });
-
-            // Add debug logging to deployment loading
-            async function loadDeployments(server) {
-                console.log('Loading deployments for server:', server);
-                // ... rest of loadDeployments function ...
-            }
-
-            // Add debug logging to build selection
-            deploymentsContainer.addEventListener('click', (ev) => {
-                const btn = ev.target.closest('.remove-build-btn');
-                if (btn) {
-                    ev.preventDefault();
-                    ev.stopPropagation();
-
-                    const li = btn.closest('.build-row');
-                    if (!li) return;
-
-                    const app = li.dataset.app;
-                    const build = li.dataset.build;
-
-                    console.log('Build selected:', { app, build });
-
-                    currentSelection = { app, build };
-                    selectedInfo.textContent = `Selected: ${app} :: ${build}`;
-                    removeSelectedBtn.disabled = false;
-                    removeAppBtn.disabled = false;
-
-                    logSelectionState();
-                }
-            });
-        });
-    </script>
 </body>
 </html>

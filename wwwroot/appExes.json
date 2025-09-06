@@ -2,5 +2,6 @@
   "App1": "App1.exe",
   "App2": "App2.exe",
   "CST Win APP": "Python\\CirtcaSports.WebApp.exe",
-  "CST Book": "Python\\Launcher\\coreftp.exe"
+  "CST Book": "Python\\Launcher\\coreftp.exe",
+  "Some new app": "pathrandom\\some new path.exe"
 }
