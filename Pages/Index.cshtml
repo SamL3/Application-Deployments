@@ -48,7 +48,7 @@
 
                     <label class="form-label small mt-2">Environment Filter</label>
                     <div id="envFilters" class="btn-group btn-group-sm mb-2" role="group">
-                        @foreach (var env in new[] { "DEV","QA","UAT","REG","STG","PRD" })
+                        @foreach (var env in new[] { "DEV","QA","UAT","REG" })
                         {
                             <button type="button" class="btn btn-outline-secondary env-btn" data-env="@env">@env</button>
                         }

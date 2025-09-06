@@ -47,8 +47,14 @@
 
         <div class="col-lg-6">
             <div class="card h-100 shadow-sm">
-                <div class="card-header">Deployments on Selected Servers</div>
-                <div class="card-body p-2">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>Deployments on Selected Servers</span>
+                    <div>
+                        <button type="button" id="selectAllBuilds" class="btn btn-sm btn-outline-secondary me-2" disabled>Select All Builds</button>
+                        <button type="button" id="removeSelectedBuildsBtn" class="btn btn-sm btn-danger" disabled>Remove Selected Builds</button>
+                    </div>
+                </div>
+                <div class="card-body p-2" style="max-height:70vh; overflow:auto;">
                     <div id="deploymentsContainer" class="row g-3">
                         <div class="col-12 text-muted">Select server(s) to view deployments.</div>
                     </div>
@@ -61,9 +67,8 @@
                 <div class="card-header">Actions</div>
                 <div class="card-body d-flex flex-column">
                     <div id="selectedInfo" class="mb-3 small text-muted">No selection</div>
-                    <button type="button" id="removeSelectedBtn" class="btn btn-danger mb-2" disabled>Remove Selected Build</button>
-                    <button type="button" id="removeAppBtn" class="btn btn-outline-danger mb-2" disabled>Remove Entire App</button>
                     <button type="button" id="loadDeploymentsBtn" class="btn btn-primary mb-2" disabled>Load Deployments</button>
+                    <button type="button" id="refreshDeploymentsBtn" class="btn btn-outline-secondary mb-2" disabled>Refresh</button>
                     <div id="maintenanceStatus" class="small text-muted mt-auto">Ready</div>
                 </div>
             </div>
@@ -80,11 +85,11 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <p id="confirmMessage">This will delete the path:</p>
-        <pre id="confirmPath" class="small bg-light p-2 rounded"></pre>
+        <p id="confirmMessage">This will permanently delete the following builds:</p>
+        <div id="confirmBuildsList" class="small bg-light p-2 rounded mb-3" style="max-height:200px; overflow:auto;"></div>
         <div class="form-check">
             <input class="form-check-input" type="checkbox" id="confirmReally" />
-            <label class="form-check-label" for="confirmReally">I understand this will permanently delete the folder.</label>
+            <label class="form-check-label" for="confirmReally">I understand this will permanently delete the selected build folders.</label>
         </div>
       </div>
       <div class="modal-footer">
@@ -99,7 +104,12 @@
 <style>
     .server-row:hover { background-color: rgba(0,123,255,0.1); }
     .server-row.selected { background-color: rgba(0,123,255,0.2); }
+    .build-row:hover { background-color: rgba(0,123,255,0.05); }
+    .build-row.selected { background-color: rgba(0,123,255,0.15); }
     .sticky-top { position: sticky; top: 0; z-index: 10; }
+    .app-card { margin-bottom: 1rem; }
+    .builds-table { font-size: 0.875rem; }
+    .builds-table td { padding: 0.375rem 0.5rem; }
 </style>
 
 <script>
@@ -118,19 +128,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectAllServers = document.getElementById('selectAllServers');
     const selectedServersInfo = document.getElementById('selectedServersInfo');
     const loadDeploymentsBtn = document.getElementById('loadDeploymentsBtn');
+    const refreshDeploymentsBtn = document.getElementById('refreshDeploymentsBtn');
+    const selectAllBuilds = document.getElementById('selectAllBuilds');
+    const removeSelectedBuildsBtn = document.getElementById('removeSelectedBuildsBtn');
     const deploymentsContainer = document.getElementById('deploymentsContainer');
     const selectedInfo = document.getElementById('selectedInfo');
-    const removeSelectedBtn = document.getElementById('removeSelectedBtn');
-    const removeAppBtn = document.getElementById('removeAppBtn');
     const status = document.getElementById('maintenanceStatus');
 
     let selectedServers = [];
-    let currentSelection = { app: null, build: null, server: null };
+    let currentServer = null;
 
     // Modal elements
     const confirmModalEl = document.getElementById('confirmModal');
     const confirmModal = (typeof bootstrap !== 'undefined' && confirmModalEl) ? new bootstrap.Modal(confirmModalEl) : null;
-    const confirmPath = document.getElementById('confirmPath');
+    const confirmBuildsList = document.getElementById('confirmBuildsList');
     const confirmReally = document.getElementById('confirmReally');
     const confirmOk = document.getElementById('confirmOk');
 
@@ -179,12 +190,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (selectedServers.length === 0) {
             selectedServersInfo.textContent = 'No servers selected';
             loadDeploymentsBtn.disabled = true;
+            refreshDeploymentsBtn.disabled = true;
         } else if (selectedServers.length === 1) {
             selectedServersInfo.textContent = `Selected: ${selectedServers[0]}`;
             loadDeploymentsBtn.disabled = false;
+            refreshDeploymentsBtn.disabled = false;
         } else {
             selectedServersInfo.textContent = `Selected: ${selectedServers.length} servers`;
             loadDeploymentsBtn.disabled = false;
+            refreshDeploymentsBtn.disabled = true; // Disable refresh for multiple servers
         }
     }
 
@@ -214,17 +228,18 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Clear previous deployments
         deploymentsContainer.innerHTML = '<div class="col-12">Loading...</div>';
-        currentSelection = { app: null, build: null, server: null };
         selectedInfo.textContent = 'No selection';
-        removeSelectedBtn.disabled = true;
-        removeAppBtn.disabled = true;
+        selectAllBuilds.disabled = true;
+        removeSelectedBuildsBtn.disabled = true;
         
         try {
             if (selectedServers.length === 1) {
                 // Single server - load deployments for that server
-                await loadDeployments(selectedServers[0]);
+                currentServer = selectedServers[0];
+                await loadDeployments(currentServer);
             } else {
                 // Multiple servers - show summary
+                currentServer = null;
                 await loadMultiServerSummary(selectedServers);
             }
             status.textContent = 'Loaded';
@@ -234,11 +249,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Refresh deployments button
+    refreshDeploymentsBtn.addEventListener('click', async () => {
+        if (currentServer) {
+            await loadDeployments(currentServer);
+        }
+    });
+
     async function loadDeployments(server) {
         const resp = await fetch(`/Maintenance?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
-        renderDeployments(data, server);
+        renderDeploymentsCards(data, server);
     }
 
     async function loadMultiServerSummary(servers) {
@@ -281,7 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="text-danger small">${escapeHtml(error)}</div>
                     </div>`;
             } else {
-                const totalBuilds = deployments.reduce((sum, app) => sum + app.builds.length, 0);
+                const totalBuilds = deployments.reduce((sum, app) => sum + app.buildCount, 0);
                 card.innerHTML = `
                     <div class="card-header small fw-semibold">
                         ${escapeHtml(server)} 
@@ -290,7 +312,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <div class="card-body p-2">
                         <div class="small">
-                            ${deployments.map(app => `<span class="badge bg-light text-dark me-1">${escapeHtml(app.app)}</span>`).join('')}
+                            ${deployments.map(app => `<span class="badge bg-light text-dark me-1">${escapeHtml(app.app)} (${app.buildCount})</span>`).join('')}
                         </div>
                     </div>`;
             }
@@ -304,77 +326,194 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function renderDeployments(data, server) {
+    function renderDeploymentsCards(data, server) {
         deploymentsContainer.innerHTML = '';
+        
         if (!data || data.length === 0) {
             deploymentsContainer.innerHTML = '<div class="col-12 text-muted">No deployments found on this server.</div>';
+            selectAllBuilds.disabled = true;
+            removeSelectedBuildsBtn.disabled = true;
             return;
         }
 
-        data.forEach(group => {
+        // Create cards for each application
+        data.forEach(app => {
             const col = document.createElement('div');
-            col.className = 'col-12';
-            const header = document.createElement('div');
-            header.className = 'card';
-            const inner = `
-                <div class="card-header small fw-semibold">${escapeHtml(group.app)} <span class="badge bg-secondary ms-2">${group.builds.length}</span></div>
-                <div class="card-body p-2" style="max-height:200px;overflow:auto">
-                    <ul class="list-group list-group-flush" data-app="${escapeHtml(group.app)}">
-                        ${group.builds.map(b => `
-                        <li class="list-group-item d-flex justify-content-between align-items-center build-row" data-app="${escapeHtml(group.app)}" data-build="${escapeHtml(b)}" data-server="${escapeHtml(server)}">
-                            <span class="small text-wrap">${escapeHtml(b)}</span>
-                            <div>
-                                <button type="button" class="btn btn-sm btn-outline-danger remove-build-btn">Remove</button>
-                            </div>
-                        </li>`).join('')}
-                    </ul>
-                </div>`;
-            header.innerHTML = inner;
-            col.appendChild(header);
+            col.className = 'col-12 app-card';
+            
+            const cardHTML = `
+                <div class="card">
+                    <div class="card-header small fw-semibold d-flex justify-content-between align-items-center">
+                        <span>${escapeHtml(app.app)}</span>
+                        <span class="badge bg-secondary">${app.buildCount} builds</span>
+                    </div>
+                    <div class="card-body p-0">
+                        ${app.builds.length > 0 ? `
+                            <table class="table table-sm table-hover builds-table mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th scope="col" style="width: 50px;">
+                                            <input type="checkbox" class="form-check-input app-select-all" 
+                                                   data-app="${escapeHtml(app.app)}" title="Select All Builds for ${escapeHtml(app.app)}">
+                                        </th>
+                                        <th scope="col">Build Name</th>
+                                        <th scope="col" style="width: 100px;">Size</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${app.builds.map(build => `
+                                        <tr class="build-row" data-app="${escapeHtml(app.app)}" data-build="${escapeHtml(build.name)}" data-server="${escapeHtml(server)}">
+                                            <td>
+                                                <input type="checkbox" class="form-check-input build-checkbox" 
+                                                       value="${escapeHtml(app.app)}|${escapeHtml(build.name)}" 
+                                                       data-app="${escapeHtml(app.app)}"
+                                                       id="build_${escapeHtml(app.app)}_${escapeHtml(build.name)}">
+                                            </td>
+                                            <td class="text-wrap">${escapeHtml(build.name)}</td>
+                                            <td class="text-end">${build.sizeMB.toFixed(2)} MB</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        ` : `
+                            <div class="p-3 text-muted small">No builds found for this application.</div>
+                        `}
+                    </div>
+                </div>
+            `;
+            
+            col.innerHTML = cardHTML;
             deploymentsContainer.appendChild(col);
         });
-
-        // wire remove buttons (delegated)
-        deploymentsContainer.querySelectorAll('.remove-build-btn').forEach(btn => {
-            btn.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const li = ev.target.closest('.build-row');
-                if (!li) return;
-                
-                const app = li.dataset.app;
-                const build = li.dataset.build;
-                const server = li.dataset.server;
-                
-                currentSelection = { app, build, server };
-                selectedInfo.textContent = `Selected: ${server} :: ${app} :: ${build}`;
-                
-                removeSelectedBtn.disabled = false;
-                removeAppBtn.disabled = false;
-            });
-        });
-
-        // wire clicking on a list group (select app)
-        deploymentsContainer.querySelectorAll('[data-app]').forEach(ul => {
-            ul.addEventListener('click', (ev) => {
-                if (ev.target.closest('.remove-build-btn')) return; // Don't interfere with remove buttons
-                
-                const app = ul.getAttribute('data-app');
-                currentSelection = { app, build: null, server };
-                selectedInfo.textContent = `Selected app: ${server} :: ${app}`;
-                removeSelectedBtn.disabled = true;
-                removeAppBtn.disabled = false;
-            });
-        });
+        
+        // Enable controls
+        selectAllBuilds.disabled = false;
+        
+        // Wire up build selection events - get fresh references each time
+        wireUpBuildEvents();
     }
 
-    // show confirm modal, build UNC path using server-side CSTApps value
-    function showConfirm(server, app, build, removeApp) {
-        const unc = build
-            ? `\\\\${server}\\C$\\${cstApps}\\${app}\\${build}`
-            : `\\\\${server}\\C$\\${cstApps}\\${app}`;
+    function wireUpBuildEvents() {
+        const buildCheckboxes = document.querySelectorAll('.build-checkbox');
+        const appSelectAllCheckboxes = document.querySelectorAll('.app-select-all');
+        
+        // Build row selection (full row click)
+        document.querySelectorAll('.build-row').forEach(row => {
+            row.addEventListener('click', (e) => {
+                if (e.target.type === 'checkbox') return; // Don't interfere with checkbox clicks
+                
+                const checkbox = row.querySelector('.build-checkbox');
+                checkbox.checked = !checkbox.checked;
+                checkbox.dispatchEvent(new Event('change'));
+            });
+        });
 
-        confirmPath.textContent = unc;
+        // Build checkbox handling
+        function updateBuildRowStyles() {
+            buildCheckboxes.forEach(cb => {
+                const row = cb.closest('.build-row');
+                if (cb.checked) {
+                    row.classList.add('selected');
+                } else {
+                    row.classList.remove('selected');
+                }
+            });
+        }
+
+        function updateAppSelectAllStates() {
+            appSelectAllCheckboxes.forEach(appCheckbox => {
+                const appName = appCheckbox.getAttribute('data-app');
+                const appBuilds = Array.from(buildCheckboxes).filter(cb => cb.getAttribute('data-app') === appName);
+                const checkedAppBuilds = appBuilds.filter(cb => cb.checked);
+                
+                if (checkedAppBuilds.length === 0) {
+                    appCheckbox.indeterminate = false;
+                    appCheckbox.checked = false;
+                } else if (checkedAppBuilds.length === appBuilds.length) {
+                    appCheckbox.indeterminate = false;
+                    appCheckbox.checked = true;
+                } else {
+                    appCheckbox.indeterminate = true;
+                    appCheckbox.checked = false;
+                }
+            });
+        }
+
+        function updateRemoveButtonState() {
+            const checkedBuilds = Array.from(buildCheckboxes).filter(cb => cb.checked);
+            removeSelectedBuildsBtn.disabled = checkedBuilds.length === 0;
+            
+            if (checkedBuilds.length > 0) {
+                selectedInfo.textContent = `Selected: ${checkedBuilds.length} build(s) on ${currentServer}`;
+            } else {
+                selectedInfo.textContent = 'No selection';
+            }
+        }
+
+        // App select all functionality
+        appSelectAllCheckboxes.forEach(appCheckbox => {
+            appCheckbox.addEventListener('change', () => {
+                const appName = appCheckbox.getAttribute('data-app');
+                const checked = appCheckbox.checked;
+                const appBuilds = Array.from(buildCheckboxes).filter(cb => cb.getAttribute('data-app') === appName);
+                
+                appBuilds.forEach(cb => {
+                    cb.checked = checked;
+                });
+                
+                updateBuildRowStyles();
+                updateAppSelectAllStates();
+                updateRemoveButtonState();
+            });
+        });
+
+        // Individual build checkbox change handlers
+        buildCheckboxes.forEach(cb => {
+            cb.addEventListener('change', () => {
+                updateBuildRowStyles();
+                updateAppSelectAllStates();
+                updateRemoveButtonState();
+            });
+        });
+
+        // Initialize build states
+        updateBuildRowStyles();
+        updateAppSelectAllStates();
+        updateRemoveButtonState();
+    }
+
+    // Select all builds button (header) - fixed to use fresh selector
+    selectAllBuilds.addEventListener('click', () => {
+        const buildCheckboxes = document.querySelectorAll('.build-checkbox');
+        if (buildCheckboxes.length === 0) return;
+        
+        const allChecked = Array.from(buildCheckboxes).every(cb => cb.checked);
+        
+        buildCheckboxes.forEach(cb => {
+            cb.checked = !allChecked;
+        });
+        
+        // Trigger change events to update UI
+        buildCheckboxes[0].dispatchEvent(new Event('change'));
+    });
+
+    // Remove selected builds button
+    removeSelectedBuildsBtn.addEventListener('click', () => {
+        const checkedBuilds = Array.from(document.querySelectorAll('.build-checkbox:checked'));
+        if (checkedBuilds.length === 0 || !currentServer) return;
+        
+        const buildIdentifiers = checkedBuilds.map(cb => cb.value);
+        showConfirmModal(currentServer, buildIdentifiers);
+    });
+
+    // Show confirmation modal
+    function showConfirmModal(server, buildIdentifiers) {
+        const buildsList = buildIdentifiers.map(id => {
+            const parts = id.split('|');
+            return `\\\\${server}\\C$\\${cstApps}\\${parts[0]}\\${parts[1]}`;
+        }).join('\n');
+        
+        confirmBuildsList.textContent = buildsList;
         confirmReally.checked = false;
         confirmOk.disabled = true;
         confirmModal?.show();
@@ -382,34 +521,22 @@ document.addEventListener('DOMContentLoaded', () => {
         confirmReally.onchange = () => confirmOk.disabled = !confirmReally.checked;
         confirmOk.onclick = async () => {
             confirmModal?.hide();
-            await postRemove(server, app, build, removeApp);
+            await postRemoveMultipleBuilds(server, buildIdentifiers);
         };
     }
 
-    removeSelectedBtn.addEventListener('click', () => {
-        if (!currentSelection.server || !currentSelection.app || !currentSelection.build) return;
-        showConfirm(currentSelection.server, currentSelection.app, currentSelection.build, false);
-    });
-
-    removeAppBtn.addEventListener('click', () => {
-        if (!currentSelection.server || !currentSelection.app) return;
-        showConfirm(currentSelection.server, currentSelection.app, null, true);
-    });
-
-    async function postRemove(server, app, build, removeApp) {
-        status.textContent = 'Removing...';
+    async function postRemoveMultipleBuilds(server, buildIdentifiers) {
+        status.textContent = 'Removing builds...';
 
         const tokenInput = document.querySelector('input[name="__RequestVerificationToken"]');
         const token = tokenInput ? tokenInput.value : '';
 
         const body = new URLSearchParams();
         body.append('server', server);
-        body.append('app', app);
-        if (build) body.append('build', build);
-        body.append('removeApp', removeApp ? 'true' : 'false');
+        buildIdentifiers.forEach(id => body.append('selectedBuilds', id));
 
         try {
-            const resp = await fetch('/Maintenance?handler=Remove', {
+            const resp = await fetch('/Maintenance?handler=RemoveMultipleBuilds', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -435,11 +562,18 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             status.textContent = payload.message || 'Removed';
+            
+            // Show detailed results if available
+            if (payload.results && payload.results.length > 0) {
+                const failedResults = payload.results.filter(r => !r.success);
+                if (failedResults.length > 0) {
+                    console.warn('Some removals failed:', failedResults);
+                }
+            }
+
+            // Refresh the deployments view
             await loadDeployments(server);
-            currentSelection = { app: null, build: null, server: null };
             selectedInfo.textContent = 'No selection';
-            removeSelectedBtn.disabled = true;
-            removeAppBtn.disabled = true;
         } catch (e) {
             status.textContent = 'Error';
             console.error('Remove error', e);
