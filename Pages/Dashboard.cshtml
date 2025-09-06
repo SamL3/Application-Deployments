@@ -1,172 +1,230 @@
 @page
 @model ApplicationDeployment.Pages.DashboardModel
 @{
-    ViewData["Title"] = "Deployment Dashboard";
+    ViewData["Title"] = "Dashboard";
 }
 
-<div class="container my-4">
-    <h1 class="display-6 text-primary mb-3">Deployment Dashboard</h1>
+<div class="container-fluid py-3">
+    <h1 class="h3 fw-semibold text-primary mb-4">Environment Dashboard</h1>
 
-    <div class="row g-4">
-        <!-- Servers list -->
-        <div class="col-lg-3">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header bg-light fw-semibold">Servers</div>
-                <div class="card-body p-2">
-                    <div class="list-group" id="serversList">
-                        @foreach (var s in Model.Servers)
-                        {
-                            <button type="button" class="list-group-item list-group-item-action server-btn" data-server="@s.Value">@s.Text</button>
-                        }
-                    </div>
-                    <div class="mt-3 small text-muted">Select a server to load details.</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Server details -->
-        <div class="col-lg-6">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header bg-light fw-semibold d-flex justify-content-between align-items-center">
-                    <span>Server Details</span>
-                    <small id="selectedServerLabel" class="text-muted">(none)</small>
-                </div>
-                <div class="card-body p-3">
-                    <div id="diskSection" class="mb-3">
-                        <h6>Disk Usage</h6>
-                        <div id="diskList" class="mb-2"></div>
-                    </div>
-
-                    <div id="appsSection">
-                        <h6>Installed Applications</h6>
-                        <div class="table-responsive" style="max-height:42vh; overflow:auto;">
-                            <table class="table table-sm table-striped mb-0">
-                                <thead>
-                                    <tr>
-                                        <th>Application</th>
-                                        <th class="text-end">Version</th>
-                                        <th class="text-end">Publisher</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="appsTableBody">
-                                    <tr><td colspan="3" class="text-muted small">Select a server</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Actions / Status -->
-        <div class="col-lg-3">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header bg-light fw-semibold">Actions & Status</div>
-                <div class="card-body d-flex flex-column">
-                    <button id="refreshBtn" class="btn btn-outline-primary mb-3" disabled>Refresh Selected</button>
-                    <div id="statusBox" class="small text-muted mb-3">Ready</div>
-
-                    <div id="chartHint" class="mt-auto small text-muted">Disk bars show free space percentage.</div>
-                </div>
-            </div>
-        </div>
+    <div id="serversRow" class="row g-4">
+        <!-- Server cards injected here -->
     </div>
 </div>
 
 @section Scripts {
+<style>
+    .server-card { min-height: 420px; position: relative; }
+    .apps-list, .builds-list { font-size: .8rem; max-height: 150px; overflow:auto; }
+    .spinner-sm { width:1.5rem; height:1.5rem; }
+    .progress { background-color:#e9ecef; }
+    .badge-size { font-weight:500; }
+    .section-title { font-size:.75rem; letter-spacing:.05em; text-transform:uppercase; margin-top:.75rem; color:#6c757d;}
+    .collapse-toggle { cursor:pointer; }
+    .builds-list table td { padding:.25rem .5rem; }
+    .app-name-trunc { max-width:180px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+</style>
+
 <script>
-(function () {
-    const serverButtons = document.querySelectorAll('.server-btn');
-    const selectedLabel = document.getElementById('selectedServerLabel');
-    const appsTableBody = document.getElementById('appsTableBody');
-    const diskList = document.getElementById('diskList');
-    const refreshBtn = document.getElementById('refreshBtn');
-    const statusBox = document.getElementById('statusBox');
-    let currentServer = null;
+document.addEventListener('DOMContentLoaded', () => {
+    const serversRow = document.getElementById('serversRow');
 
-    serverButtons.forEach(btn => btn.addEventListener('click', () => {
-        serverButtons.forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentServer = btn.dataset.server;
-        selectedLabel.textContent = currentServer;
-        loadServerDetails(currentServer);
-        refreshBtn.disabled = false;
-    }));
+    loadServers();
 
-    refreshBtn.addEventListener('click', () => {
-        if (currentServer) loadServerDetails(currentServer, true);
-    });
+    async function loadServers() {
+        serversRow.innerHTML = '<div class="col-12 text-center text-muted py-5">Loading servers...</div>';
+        try {
+            const resp = await fetch('/Dashboard?handler=Servers', { cache: 'no-store' });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const servers = await resp.json();
+            if (!servers || servers.length === 0) {
+                serversRow.innerHTML = '<div class="col-12 text-center text-muted py-5">No servers found.</div>';
+                return;
+            }
+            serversRow.innerHTML = '';
+            servers.forEach(s => {
+                const col = document.createElement('div');
+                col.className = 'col-xl-3 col-lg-4 col-md-6';
+                col.innerHTML = serverCardSkeleton(s);
+                serversRow.appendChild(col);
+                loadServerDetails(s);
+            });
+        } catch (e) {
+            serversRow.innerHTML = `<div class="col-12 text-danger text-center py-5">Error loading servers: ${escapeHtml(e.message)}</div>`;
+        }
+    }
 
-    async function loadServerDetails(server, force = false) {
-        statusBox.textContent = 'Loading...';
-        diskList.innerHTML = '';
-        appsTableBody.innerHTML = '<tr><td colspan="3" class="text-muted small">Loading...</td></tr>';
+    function serverCardSkeleton(server) {
+        return `
+        <div class="card shadow-sm server-card" data-server="${escapeHtml(server)}">
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                <span class="fw-semibold small">${escapeHtml(server)}</span>
+                <div class="spinner-border spinner-sm text-secondary" role="status"></div>
+            </div>
+            <div class="card-body p-2">
+                <div class="section-title mt-0">Disk</div>
+                <div class="disk-area small text-muted">Loading...</div>
+                <div class="section-title">Deployments</div>
+                <div class="deployments-area small text-muted">Loading...</div>
+                <div class="section-title">Applications</div>
+                <div class="apps-area small text-muted">Loading...</div>
+            </div>
+            <div class="card-footer bg-light py-1 text-end small text-muted status-line">Loading...</div>
+        </div>`;
+    }
+
+    async function loadServerDetails(server) {
+        const card = document.querySelector(`.server-card[data-server="${CSS.escape(server)}"]`);
+        if (!card) return;
+        const spinner = card.querySelector('.spinner-border');
+        const diskArea = card.querySelector('.disk-area');
+        const deploymentsArea = card.querySelector('.deployments-area');
+        const appsArea = card.querySelector('.apps-area');
+        const statusLine = card.querySelector('.status-line');
 
         try {
-            const resp = await fetch(`/Dashboard?handler=ServerInfo&server=${encodeURIComponent(server)}`);
+            const resp = await fetch(`/Dashboard?handler=ServerDetails&server=${encodeURIComponent(server)}`, { cache:'no-store' });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
 
-            renderDisks(data.disks || []);
-            renderApps(data.apps || []);
-            statusBox.textContent = 'Loaded ' + (data.apps?.length ?? 0) + ' apps';
+            renderDisks(diskArea, data.disks || []);
+            renderDeployments(deploymentsArea, data.deployments || []);
+            renderApps(appsArea, data.apps || []);
+            statusLine.textContent = `Apps: ${(data.apps||[]).length} | Builds: ${data.totalBuildCount ?? 0} | Size: ${(data.totalBuildSizeMB ?? 0).toFixed(1)} MB`;
         } catch (e) {
-            console.error(e);
-            statusBox.textContent = 'Error fetching server info';
-            appsTableBody.innerHTML = `<tr><td colspan="3" class="text-danger small">Error: ${e.message}</td></tr>`;
+            diskArea.innerHTML = `<span class="text-danger">Error</span>`;
+            deploymentsArea.innerHTML = `<span class="text-danger">Error: ${escapeHtml(e.message)}</span>`;
+            appsArea.innerHTML = `<span class="text-danger">Error</span>`;
+            statusLine.textContent = 'Error';
+        } finally {
+            if (spinner) spinner.remove();
         }
     }
 
-    function renderDisks(disks) {
-        diskList.innerHTML = '';
-        if (!disks || disks.length === 0) {
-            diskList.innerHTML = '<div class="small text-muted">No disk data</div>';
-            return;
-        }
+    function renderDisks(container, disks) {
+        if (!disks.length) { container.innerHTML = '<span class="text-muted">No data</span>'; return; }
+        container.innerHTML = '';
         disks.forEach(d => {
-            const used = d.size > 0 ? Math.round((1 - (d.free / d.size)) * 100) : 0;
+            const usedPct = d.size > 0 ? Math.round((1 - (d.free / d.size)) * 100) : 0;
+            const barClass = usedPct > 85 ? 'bg-danger' : usedPct > 65 ? 'bg-warning' : 'bg-success';
+            const freeTxt = formatBytes(d.free);
+            const sizeTxt = formatBytes(d.size);
             const div = document.createElement('div');
             div.className = 'mb-2';
             div.innerHTML = `
-                <div class="d-flex justify-content-between small mb-1">
-                    <div>${d.name} ${d.volumeName ? '- ' + d.volumeName : ''}</div>
-                    <div>${formatBytes(d.free)} free / ${formatBytes(d.size)}</div>
+                <div class="d-flex justify-content-between small">
+                    <span>${escapeHtml(d.name)}${d.volumeName ? ' - ' + escapeHtml(d.volumeName) : ''}</span>
+                    <span>${freeTxt} free</span>
                 </div>
-                <div class="progress" style="height:14px">
-                  <div class="progress-bar ${used > 85 ? 'bg-danger' : used > 60 ? 'bg-warning' : 'bg-success'}"
-                       role="progressbar" style="width:${used}%">${used}%</div>
+                <div class="progress" style="height:10px;">
+                    <div class="progress-bar ${barClass}" style="width:${usedPct}%"></div>
+                </div>
+                <div class="d-flex justify-content-between small text-muted">
+                    <span>${usedPct}% used</span>
+                    <span>${sizeTxt}</span>
                 </div>`;
-            diskList.appendChild(div);
+            container.appendChild(div);
         });
     }
 
-    function renderApps(apps) {
-        appsTableBody.innerHTML = '';
-        if (!apps || apps.length === 0) {
-            appsTableBody.innerHTML = '<tr><td colspan="3" class="text-muted small">No installed applications discovered</td></tr>';
-            return;
-        }
-        apps.forEach(a => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td class="text-truncate" style="max-width:45ch;">${escapeHtml(a.displayName)}</td>
-                            <td class="text-end small text-muted">${escapeHtml(a.displayVersion ?? '')}</td>
-                            <td class="text-end small text-muted">${escapeHtml(a.publisher ?? '')}</td>`;
-            appsTableBody.appendChild(tr);
+    function renderDeployments(container, deployments) {
+        if (!deployments.length) { container.innerHTML = '<span class="text-muted">No deployments</span>'; return; }
+        const totalBuilds = deployments.reduce((s,a)=>s+a.buildCount,0);
+        const totalSize = deployments.reduce((s,a)=>s+a.totalSizeMB,0);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'builds-list';
+        wrapper.innerHTML = `
+            <div class="small mb-1">
+                <span class="badge text-bg-secondary">Apps: ${deployments.length}</span>
+                <span class="badge text-bg-info">Builds: ${totalBuilds}</span>
+                <span class="badge text-bg-dark">Size: ${totalSize.toFixed(1)} MB</span>
+            </div>
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="small">App</th>
+                        <th class="small text-end">Builds</th>
+                        <th class="small text-end">Size MB</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${deployments.map(app =>
+                        `<tr class="collapse-toggle" data-app="${escapeHtml(app.app)}">
+                            <td class="app-name-trunc">${escapeHtml(app.app)}</td>
+                            <td class="text-end">${app.buildCount}</td>
+                            <td class="text-end">${app.totalSizeMB.toFixed(1)}</td>
+                        </tr>
+                        <tr class="d-none builds-row" data-app="${escapeHtml(app.app)}">
+                            <td colspan="3">
+                                ${app.builds.length
+                                    ? `<div class="small">
+                                        ${app.builds.map(b =>
+                                            `<div class="d-flex justify-content-between">
+                                                <span>${escapeHtml(b.name)}</span>
+                                                <span class="text-muted">${b.sizeMB.toFixed(2)} MB</span>
+                                             </div>`).join('')}
+                                      </div>`
+                                    : '<span class="text-muted small">No builds</span>'}
+                            </td>
+                        </tr>`
+                    ).join('')}
+                </tbody>
+            </table>`;
+        container.innerHTML = '';
+        container.appendChild(wrapper);
+
+        // Toggle build details
+        wrapper.querySelectorAll('.collapse-toggle').forEach(row => {
+            row.addEventListener('click', () => {
+                const app = row.getAttribute('data-app');
+                const detailRow = wrapper.querySelector(`.builds-row[data-app="${CSS.escape(app)}"]`);
+                if (detailRow) detailRow.classList.toggle('d-none');
+            });
         });
+    }
+
+    function renderApps(container, apps) {
+        if (!apps.length) { container.innerHTML = '<span class="text-muted">No applications</span>'; return; }
+        // Show only first 12, expand on click
+        const max = 12;
+        const short = apps.slice(0,max);
+        container.innerHTML = `
+            <div class="apps-list">
+                ${short.map(a => `
+                    <div class="d-flex justify-content-between">
+                        <span class="text-truncate" style="max-width:140px;" title="${escapeHtml(a.displayName)}">${escapeHtml(a.displayName)}</span>
+                        <span class="text-muted">${escapeHtml(a.displayVersion || '')}</span>
+                    </div>`).join('')}
+                ${apps.length > max ? `<div class="mt-1"><a href="#" class="small" data-action="expand-apps">Show all (${apps.length})</a></div>` : ''}
+            </div>`;
+        if (apps.length > max) {
+            container.querySelector('[data-action="expand-apps"]').addEventListener('click', e => {
+                e.preventDefault();
+                container.innerHTML = `
+                    <div class="apps-list">
+                        ${apps.map(a => `
+                            <div class="d-flex justify-content-between">
+                                <span class="text-truncate" style="max-width:140px;" title="${escapeHtml(a.displayName)}">${escapeHtml(a.displayName)}</span>
+                                <span class="text-muted">${escapeHtml(a.displayVersion || '')}</span>
+                            </div>`).join('')}
+                    </div>`;
+            });
+        }
     }
 
     function formatBytes(bytes) {
-        if (bytes === null || bytes === undefined) return 'n/a';
-        const sizes = ['B','KB','MB','GB','TB'];
         if (bytes === 0) return '0 B';
-        const i = Math.floor(Math.log(bytes) / Math.log(1024));
-        return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + sizes[i];
+        if (!bytes) return 'n/a';
+        const k = 1024;
+        const sizes = ['B','KB','MB','GB','TB'];
+        const i = Math.floor(Math.log(bytes)/Math.log(k));
+        return (bytes/Math.pow(k,i)).toFixed(i===0?0:1) + ' ' + sizes[i];
     }
 
     function escapeHtml(s) {
         if (!s) return '';
         return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
-})();
+});
 </script>
 }
