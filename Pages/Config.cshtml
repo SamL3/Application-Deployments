@@ -1,175 +1,142 @@
 @page "/Config"
 @model ApplicationDeployment.Pages.ConfigModel
-@using System.Text.Json
 
 <h1 class="mb-3">Config — Configuration Settings</h1>
 
 <form id="configForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
-    
+
     <div class="row g-4">
-        <!-- Staging Path Configuration -->
-        <div class="col-12">
-            <div class="card shadow-sm">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0">Staging Path Configuration</h5>
+        <!-- Dashboard Options (ensure single instance) -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm h-100" id="dashboardOptionsCard">
+                <div class="card-header bg-dark text-white">
+                    <h5 class="mb-0">Dashboard Options</h5>
                 </div>
                 <div class="card-body">
-                    <div class="mb-3">
-                        <label for="stagingPath" class="form-label">
-                            Staging Path Location <span class="text-danger">*</span>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="showAppsToggle" @(Model.ShowAppsOnDashboard ? "checked" : "") />
+                        <label class="form-check-label" for="showAppsToggle">
+                            Show Installed Applications Section
                         </label>
-                        <div class="input-group">
-                            <input type="text" class="form-control" id="stagingPath" 
-                                   value="@Model.StagingPath" placeholder="\\server\share\path\" required />
-                            <button type="button" class="btn btn-outline-secondary" id="testStagingPathBtn">Test</button>
-                            <button type="button" class="btn btn-success" id="saveStagingPath">Save</button>
-                        </div>
-                        <div class="invalid-feedback" id="stagingPathError"></div>
-                        <div class="form-text">UNC path to the builds staging directory (e.g., \\server\c$\builds\)</div>
-                        <div id="stagingPathStatus" class="mt-2"></div>
+                        <div class="form-text">Remote registry enumeration can slow loading.</div>
                     </div>
+                    <button type="button" class="btn btn-sm btn-primary" id="saveDashboardOptions">Save Dashboard Options</button>
+                    <div class="small text-muted mt-2" id="dashboardOptionsStatus"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Server List Configuration -->
-        <div class="col-lg-6">
+        <!-- Staging Path -->
+        <div class="col-lg-4">
             <div class="card shadow-sm h-100">
-                <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Server List</h5>
-                    <div>
-                        <button type="button" class="btn btn-light btn-sm" id="addServerBtn">Add Server</button>
-                        <button type="button" class="btn btn-success btn-sm" id="saveServersBtn">Save All</button>
+                <div class="card-header bg-primary text-white"><h5 class="mb-0">Staging Path</h5></div>
+                <div class="card-body">
+                    <label for="stagingPath" class="form-label">UNC Location <span class="text-danger">*</span></label>
+                    <div class="input-group mb-2">
+                        <input type="text" class="form-control" id="stagingPath" value="@Model.StagingPath" />
+                        <button type="button" class="btn btn-success" id="saveStagingPath">Save</button>
                     </div>
+                    <div class="form-text">Example: \\server\c$\builds\</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Server List -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-info text-white d-flex justify-content-between">
+                    <span>Servers</span>
+                    <span>
+                        <button type="button" class="btn btn-light btn-sm" id="addServerBtn">Add</button>
+                        <button type="button" class="btn btn-success btn-sm" id="saveServersBtn">Save</button>
+                    </span>
                 </div>
                 <div class="card-body">
-                    <div class="table-responsive" style="max-height:400px; overflow:auto;">
-                        <table class="table table-sm table-hover">
-                            <thead class="table-light sticky-top">
+                    <div class="table-responsive" style="max-height:260px;">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
                                 <tr>
-                                    <th>Host Name <span class="text-danger">*</span></th>
-                                    <th>User ID</th>
-                                    <th>Description</th>
-                                    <th style="width:120px;">Actions</th>
+                                    <th>Host</th><th>User</th><th>Description</th><th style="width:55px;"></th>
                                 </tr>
                             </thead>
                             <tbody id="serversTableBody">
-                                @foreach (var server in Model.ServerList)
-                                {
-                                    <tr data-hostname="@server.HostName" class="server-edit-row">
-                                        <td>
-                                            <input type="text" class="form-control form-control-sm server-hostname" 
-                                                   value="@server.HostName" data-field="hostname" required />
-                                            <div class="invalid-feedback"></div>
-                                        </td>
-                                        <td>
-                                            <input type="text" class="form-control form-control-sm" 
-                                                   value="@server.UserID" data-field="userid" />
-                                        </td>
-                                        <td>
-                                            <input type="text" class="form-control form-control-sm" 
-                                                   value="@server.Description" data-field="description" />
-                                        </td>
-                                        <td>
-                                            <button type="button" class="btn btn-outline-primary btn-sm test-server-btn" title="Test Connection">
-                                                Test
-                                            </button>
-                                            <button type="button" class="btn btn-outline-danger btn-sm delete-server-btn" title="Delete">
-                                                Del
-                                            </button>
-                                        </td>
-                                    </tr>
-                                }
+                            @foreach (var s in Model.ServerList)
+                            {
+                                <tr>
+                                    <td><input class="form-control form-control-sm" value="@s.HostName" data-field="hostname" required /></td>
+                                    <td><input class="form-control form-control-sm" value="@s.UserID" data-field="userid" /></td>
+                                    <td><input class="form-control form-control-sm" value="@s.Description" data-field="description" /></td>
+                                    <td><button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button></td>
+                                </tr>
+                            }
                             </tbody>
                         </table>
                     </div>
+                    <div class="small text-muted mt-2">Stored in servers.csv</div>
                 </div>
             </div>
         </div>
 
-        <!-- App Executables Configuration -->
+        <!-- App Executables -->
         <div class="col-lg-6">
             <div class="card shadow-sm h-100">
-                <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0">Application Executables</h5>
-                    <div>
-                        <button type="button" class="btn btn-dark btn-sm" id="addAppBtn">Add App</button>
-                        <button type="button" class="btn btn-success btn-sm" id="saveAppsBtn">Save All</button>
-                    </div>
+                <div class="card-header bg-warning d-flex justify-content-between">
+                    <span>Application Executables</span>
+                    <span>
+                        <button type="button" class="btn btn-dark btn-sm" id="addAppBtn">Add</button>
+                        <button type="button" class="btn btn-success btn-sm" id="saveAppsBtn">Save</button>
+                    </span>
                 </div>
                 <div class="card-body">
-                    <div class="table-responsive" style="max-height:400px; overflow:auto;">
-                        <table class="table table-sm table-hover">
-                            <thead class="table-light sticky-top">
-                                <tr>
-                                    <th>App Name <span class="text-danger">*</span></th>
-                                    <th>Executable Path <span class="text-danger">*</span></th>
-                                    <th style="width:80px;">Actions</th>
-                                </tr>
+                    <div class="table-responsive" style="max-height:260px;">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light">
+                                <tr><th>App</th><th>Exe Path</th><th style="width:55px;"></th></tr>
                             </thead>
                             <tbody id="appsTableBody">
-                                @foreach (var app in Model.AppExes)
-                                {
-                                    <tr data-appname="@app.Key">
-                                        <td><input type="text" class="form-control form-control-sm" value="@app.Key" data-field="appname" required /></td>
-                                        <td><input type="text" class="form-control form-control-sm" value="@app.Value" data-field="exepath" required /></td>
-                                        <td>
-                                            <button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Delete</button>
-                                        </td>
-                                    </tr>
-                                }
+                            @foreach (var a in Model.AppExes)
+                            {
+                                <tr>
+                                    <td><input class="form-control form-control-sm" value="@a.Key" data-field="appname" required /></td>
+                                    <td><input class="form-control form-control-sm" value="@a.Value" data-field="exepath" required /></td>
+                                    <td><button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Del</button></td>
+                                </tr>
+                            }
                             </tbody>
                         </table>
                     </div>
+                    <div class="small text-muted mt-2">Used for managing processes.</div>
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- Configuration Status -->
-    <div class="row mt-4">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <h6 class="mb-0">Configuration Status</h6>
-                    <div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportConfiguration()">
-                            Export Config
-                        </button>
-                        <input type="file" id="importConfig" accept=".json" style="display:none;" onchange="importConfiguration(event)" />
-                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="document.getElementById('importConfig').click()">
-                            Import Config
-                        </button>
-                    </div>
-                </div>
+        <!-- Summary -->
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-light">Status</div>
                 <div class="card-body">
-                    <div id="statusArea" class="alert alert-info d-none" role="alert">
-                        <div class="d-flex align-items-center">
-                            <div class="spinner-border spinner-border-sm me-2 d-none" id="statusSpinner"></div>
-                            <span id="statusMessage">Ready</span>
-                        </div>
+                    <div id="statusArea" class="alert alert-info d-none py-2 mb-3">
+                        <span id="statusMessage">Ready</span>
                     </div>
                     <div class="row text-center">
                         <div class="col-4">
-                            <div class="border-end">
-                                <div class="h4 mb-0" id="serverCount">@Model.ServerList.Count</div>
-                                <small class="text-muted">Servers</small>
-                            </div>
+                            <div class="h4 mb-0" id="serverCount">@Model.ServerList.Count</div>
+                            <small class="text-muted">Servers</small>
                         </div>
                         <div class="col-4">
-                            <div class="border-end">
-                                <div class="h4 mb-0" id="appCount">@Model.AppExes.Count</div>
-                                <small class="text-muted">Applications</small>
-                            </div>
+                            <div class="h4 mb-0" id="appCount">@Model.AppExes.Count</div>
+                            <small class="text-muted">Apps</small>
                         </div>
                         <div class="col-4">
-                            <div class="h4 mb-0" id="configStatus">
-                                @(string.IsNullOrEmpty(Model.StagingPath) ? "??" : "?")
-                            </div>
-                            <small class="text-muted">Config Status</small>
+                            <div class="h4 mb-0">@((Model.ShowAppsOnDashboard) ? "Apps On" : "Apps Off")</div>
+                            <small class="text-muted">Dashboard</small>
                         </div>
                     </div>
+                    <hr />
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportConfiguration()">Export Config</button>
+                    <input type="file" id="importConfig" accept=".json" class="d-none" onchange="importConfiguration(event)" />
+                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="document.getElementById('importConfig').click()">Import Config</button>
                 </div>
             </div>
         </div>
@@ -177,274 +144,217 @@
 </form>
 
 @section Scripts {
-<style>
-    .sticky-top { position: sticky; top: 0; z-index: 10; }
-    .table input.form-control-sm { border: 1px solid #ced4da; }
-    .table input.form-control-sm:focus { border-color: #86b7fe; box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25); }
-</style>
-
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
     const statusArea = document.getElementById('statusArea');
     const statusMessage = document.getElementById('statusMessage');
-    
-    function showStatus(message, type = 'info') {
-        statusArea.className = `alert alert-${type}`;
-        statusMessage.textContent = message;
+    const dashboardOptionsStatus = document.getElementById('dashboardOptionsStatus');
+
+    function showStatus(msg, type='info', hold=false) {
+        statusArea.className = `alert alert-${type} py-2`;
+        statusMessage.textContent = msg;
         statusArea.classList.remove('d-none');
-        setTimeout(() => statusArea.classList.add('d-none'), 3000);
+        if (!hold) setTimeout(()=>statusArea.classList.add('d-none'), 3500);
     }
 
-    // Staging Path Save
-    document.getElementById('saveStagingPath').addEventListener('click', async () => {
-        const stagingPath = document.getElementById('stagingPath').value;
-        const validation = validateStagingPath(stagingPath);
-        if (!validation.valid) {
-            showStatus(validation.message, 'danger');
-            return;
-        }
+    // Dashboard options save
+    document.getElementById('saveDashboardOptions').addEventListener('click', async () => {
+        const showApps = document.getElementById('showAppsToggle').checked;
+        dashboardOptionsStatus.textContent = 'Saving...';
         try {
-            const response = await fetch('/Config?handler=SaveStagingPath', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]').value
+            const resp = await fetch('/Config?handler=SaveDashboardOptions', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/x-www-form-urlencoded',
+                    'RequestVerificationToken': token
                 },
-                body: new URLSearchParams({ stagingPath })
+                body:new URLSearchParams({ showApps })
             });
-            const result = await response.json();
-            showStatus(result.message, result.success ? 'success' : 'danger');
-        } catch (error) {
-            showStatus('Error saving staging path: ' + error.message, 'danger');
+            const result = await resp.json();
+            dashboardOptionsStatus.textContent = result.message;
+            dashboardOptionsStatus.className = result.success ? 'text-success small' : 'text-danger small';
+            if (result.success) showStatus('Dashboard option updated. (Reload to apply.)','success');
+        } catch(e) {
+            dashboardOptionsStatus.textContent = 'Error: ' + e.message;
+            dashboardOptionsStatus.className = 'text-danger small';
         }
     });
 
-    // Add Server
+    // Servers
     document.getElementById('addServerBtn').addEventListener('click', () => {
         const tbody = document.getElementById('serversTableBody');
-        const newRow = document.createElement('tr');
-        newRow.className = 'server-edit-row';
-        newRow.innerHTML = `
-            <td>
-                <input type="text" class="form-control form-control-sm server-hostname" data-field="hostname" placeholder="Server name" required />
-                <div class="invalid-feedback"></div>
-            </td>
-            <td><input type="text" class="form-control form-control-sm" data-field="userid" placeholder="User ID" /></td>
-            <td><input type="text" class="form-control form-control-sm" data-field="description" placeholder="Description" /></td>
-            <td>
-                <button type="button" class="btn btn-outline-primary btn-sm test-server-btn">Test</button>
-                <button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button>
-            </td>
-        `;
-        tbody.appendChild(newRow);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><input class="form-control form-control-sm" data-field="hostname" required/></td>
+            <td><input class="form-control form-control-sm" data-field="userid"/></td>
+            <td><input class="form-control form-control-sm" data-field="description"/></td>
+            <td><button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button></td>`;
+        tbody.appendChild(tr);
     });
 
-    // Delete Server
-    document.addEventListener('click', (e) => {
-        if (e.target.classList.contains('delete-server-btn')) {
-            e.target.closest('tr').remove();
-        }
-    });
-
-    // Save Servers
     document.getElementById('saveServersBtn').addEventListener('click', async () => {
         const servers = [];
-        document.querySelectorAll('#serversTableBody tr').forEach(row => {
-            const hostname = row.querySelector('[data-field="hostname"]').value.trim();
-            const userid = row.querySelector('[data-field="userid"]').value.trim();
-            const description = row.querySelector('[data-field="description"]').value.trim();
-            if (hostname) {
-                const validation = validateServerData(hostname, userid, description);
-                if (!validation.valid) {
-                    showStatus(`Server ${hostname}: ${validation.message}`, 'danger');
-                    return;
-                }
-                servers.push({ hostname, userid, description });
-            }
+        document.querySelectorAll('#serversTableBody tr').forEach(tr => {
+            const hostname = tr.querySelector('[data-field="hostname"]').value.trim();
+            if (!hostname) return;
+            servers.push({
+                hostname,
+                userid: tr.querySelector('[data-field="userid"]').value.trim(),
+                description: tr.querySelector('[data-field="description"]').value.trim()
+            });
         });
         try {
-            const response = await fetch('/Config?handler=SaveServers', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]').value
+            const resp = await fetch('/Config?handler=SaveServers', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/json',
+                    'RequestVerificationToken': token
                 },
                 body: JSON.stringify({ servers })
             });
-            const result = await response.json();
-            showStatus(result.message, result.success ? 'success' : 'danger');
-            if (result.success) {
-                document.getElementById('serverCount').textContent = servers.length;
-            }
-        } catch (error) {
-            showStatus('Error saving servers: ' + error.message, 'danger');
+            const result = await resp.json();
+            showStatus(result.message, result.success ? 'success':'danger');
+            if (result.success) document.getElementById('serverCount').textContent = servers.length;
+        } catch(e) {
+            showStatus('Error saving servers: '+ e.message,'danger');
         }
     });
 
-    // Add App
+    // Apps
     document.getElementById('addAppBtn').addEventListener('click', () => {
         const tbody = document.getElementById('appsTableBody');
-        const newRow = document.createElement('tr');
-        newRow.innerHTML = `
-            <td><input type="text" class="form-control form-control-sm" data-field="appname" placeholder="App Name" required /></td>
-            <td><input type="text" class="form-control form-control-sm" data-field="exepath" placeholder="path\\to\\executable.exe" required /></td>
-            <td><button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Delete</button></td>
-        `;
-        tbody.appendChild(newRow);
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><input class="form-control form-control-sm" data-field="appname" required/></td>
+            <td><input class="form-control form-control-sm" data-field="exepath" required/></td>
+            <td><button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Del</button></td>`;
+        tbody.appendChild(tr);
     });
 
-    // Delete App
-    document.addEventListener('click', (e) => {
-        if (e.target.classList.contains('delete-app-btn')) {
+    document.getElementById('saveAppsBtn').addEventListener('click', async () => {
+        const apps = {};
+        document.querySelectorAll('#appsTableBody tr').forEach(tr => {
+            const name = tr.querySelector('[data-field="appname"]').value.trim();
+            const path = tr.querySelector('[data-field="exepath"]').value.trim();
+            if (name && path) apps[name] = path;
+        });
+        try {
+            const resp = await fetch('/Config?handler=SaveApps', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/json',
+                    'RequestVerificationToken': token
+                },
+                body: JSON.stringify({ apps })
+            });
+            const result = await resp.json();
+            showStatus(result.message, result.success ? 'success':'danger');
+            if (result.success) document.getElementById('appCount').textContent = Object.keys(apps).length;
+        } catch(e) {
+            showStatus('Error saving apps: '+ e.message,'danger');
+        }
+    });
+
+    // Delete row handlers (servers & apps)
+    document.addEventListener('click', e => {
+        if (e.target.classList.contains('delete-server-btn') ||
+            e.target.classList.contains('delete-app-btn')) {
             e.target.closest('tr').remove();
         }
     });
 
-    // Save Apps
-    document.getElementById('saveAppsBtn').addEventListener('click', async () => {
-        const apps = {};
-        document.querySelectorAll('#appsTableBody tr').forEach(row => {
-            const appname = row.querySelector('[data-field="appname"]').value.trim();
-            const exepath = row.querySelector('[data-field="exepath"]').value.trim();
-            if (appname && exepath) {
-                const validation = validateAppData(appname, exepath);
-                if (!validation.valid) {
-                    showStatus(`App ${appname}: ${validation.message}`, 'danger');
-                    return;
-                }
-                apps[appname] = exepath;
-            }
-        });
+    // Staging path
+    document.getElementById('saveStagingPath').addEventListener('click', async () => {
+        const stagingPath = document.getElementById('stagingPath').value.trim();
+        if (!stagingPath) { showStatus('Staging path required','danger'); return; }
         try {
-            const response = await fetch('/Config?handler=SaveApps', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'RequestVerificationToken': document.querySelector('input[name="__RequestVerificationToken"]').value
+            const resp = await fetch('/Config?handler=SaveStagingPath', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/x-www-form-urlencoded',
+                    'RequestVerificationToken': token
                 },
-                body: JSON.stringify({ apps })
+                body:new URLSearchParams({ stagingPath })
             });
-            const result = await response.json();
-            showStatus(result.message, result.success ? 'success' : 'danger');
-            if (result.success) {
-                document.getElementById('appCount').textContent = Object.keys(apps).length;
-            }
-        } catch (error) {
-            showStatus('Error saving apps: ' + error.message, 'danger');
+            const result = await resp.json();
+            showStatus(result.message, result.success ? 'success':'danger');
+        } catch(e) {
+            showStatus('Error saving staging path: '+ e.message,'danger');
         }
     });
 
-    // Test Server Connection
-    document.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('test-server-btn')) {
-            e.preventDefault();
-            e.stopPropagation();
-            const row = e.target.closest('.server-edit-row');
-            const hostnameInput = row.querySelector('[data-field="hostname"]');
-            const hostname = hostnameInput.value.trim();
-            if (!hostname) {
-                showStatus('Please enter a hostname first', 'warning');
-                return;
-            }
-            try {
-                const response = await fetch(`/Config?handler=TestServer&hostname=${encodeURIComponent(hostname)}`);
-                const result = await response.json();
-                showStatus(`${hostname}: ${result.message}`, result.success ? 'success' : 'danger');
-            } catch (error) {
-                showStatus(`Error testing ${hostname}: ${error.message}`, 'danger');
-            }
-        }
-    });
-
-    function validateStagingPath(path) {
-        if (!path.trim()) return { valid: false, message: 'Staging path cannot be empty' };
-        if (!path.match(/^\\\\[\\w.-]+\\[a-zA-Z$][\\w$]*\\/)) return { valid: false, message: 'Invalid UNC path format' };
-        return { valid: true, message: '' };
-    }
-    function validateServerData(hostname, userid, description) {
-        if (!hostname.trim()) return { valid: false, message: 'Hostname is required' };
-        if (hostname.match(/[\\/:*?"<>|]/)) return { valid: false, message: 'Invalid characters in hostname' };
-        if (userid && userid.length > 50) return { valid: false, message: 'User ID too long' };
-        return { valid: true, message: '' };
-    }
-    function validateAppData(appname, exepath) {
-        if (!appname.trim()) return { valid: false, message: 'App name is required' };
-        if (!exepath.trim()) return { valid: false, message: 'Executable path is required' };
-        if (!exepath.toLowerCase().endsWith('.exe')) return { valid: false, message: 'Executable must end with .exe' };
-        return { valid: true, message: '' };
-    }
-
+    // Export / Import
     window.exportConfiguration = function() {
         const servers = [];
-        document.querySelectorAll('#serversTableBody tr').forEach(row => {
-            const hostname = row.querySelector('[data-field="hostname"]').value.trim();
-            const userid = row.querySelector('[data-field="userid"]').value.trim();
-            const description = row.querySelector('[data-field="description"]').value.trim();
-            if (hostname) servers.push({ hostname, userid, description });
+        document.querySelectorAll('#serversTableBody tr').forEach(tr => {
+            const hostname = tr.querySelector('[data-field="hostname"]').value.trim();
+            if (!hostname) return;
+            servers.push({
+                hostname,
+                userid: tr.querySelector('[data-field="userid"]').value.trim(),
+                description: tr.querySelector('[data-field="description"]').value.trim()
+            });
         });
         const apps = {};
-        document.querySelectorAll('#appsTableBody tr').forEach(row => {
-            const appname = row.querySelector('[data-field="appname"]').value.trim();
-            const exepath = row.querySelector('[data-field="exepath"]').value.trim();
-            if (appname && exepath) apps[appname] = exepath;
+        document.querySelectorAll('#appsTableBody tr').forEach(tr => {
+            const a = tr.querySelector('[data-field="appname"]').value.trim();
+            const p = tr.querySelector('[data-field="exepath"]').value.trim();
+            if (a && p) apps[a] = p;
         });
-        const config = {
+        const cfg = {
             stagingPath: document.getElementById('stagingPath').value,
-            servers: servers,
-            apps: apps,
-            exportDate: new Date().toISOString()
+            showAppsOnDashboard: document.getElementById('showAppsToggle').checked,
+            servers, apps,
+            exported: new Date().toISOString()
         };
-        const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+        const blob = new Blob([JSON.stringify(cfg,null,2)], {type:'application/json'});
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `config-settings-${new Date().toISOString().split('T')[0]}.json`;
+        a.download = 'config-export.json';
         a.click();
         URL.revokeObjectURL(url);
     };
 
-    window.importConfiguration = function(event) {
-        const file = event.target.files[0];
+    window.importConfiguration = function(evt) {
+        const file = evt.target.files[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = (e) => {
+        reader.onload = e => {
             try {
-                const config = JSON.parse(e.target.result);
-                if (config.stagingPath) document.getElementById('stagingPath').value = config.stagingPath;
-                if (config.servers) {
+                const cfg = JSON.parse(e.target.result);
+                if (cfg.stagingPath) document.getElementById('stagingPath').value = cfg.stagingPath;
+                if (typeof cfg.showAppsOnDashboard === 'boolean')
+                    document.getElementById('showAppsToggle').checked = cfg.showAppsOnDashboard;
+                if (cfg.servers) {
                     const tbody = document.getElementById('serversTableBody');
                     tbody.innerHTML = '';
-                    config.servers.forEach(server => {
-                        const row = document.createElement('tr');
-                        row.className = 'server-edit-row';
-                        row.innerHTML = `
-                            <td><input type="text" class="form-control form-control-sm server-hostname" value="${server.hostname || ''}" data-field="hostname" required /></td>
-                            <td><input type="text" class="form-control form-control-sm" value="${server.userid || ''}" data-field="userid" /></td>
-                            <td><input type="text" class="form-control form-control-sm" value="${server.description || ''}" data-field="description" /></td>
-                            <td>
-                                <button type="button" class="btn btn-outline-primary btn-sm test-server-btn">Test</button>
-                                <button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button>
-                            </td>
-                        `;
-                        tbody.appendChild(row);
+                    cfg.servers.forEach(s => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td><input class="form-control form-control-sm" value="${s.hostname||''}" data-field="hostname" required/></td>
+                            <td><input class="form-control form-control-sm" value="${s.userid||''}" data-field="userid"/></td>
+                            <td><input class="form-control form-control-sm" value="${s.description||''}" data-field="description"/></td>
+                            <td><button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button></td>`;
+                        tbody.appendChild(tr);
                     });
                 }
-                if (config.apps) {
+                if (cfg.apps) {
                     const tbody = document.getElementById('appsTableBody');
                     tbody.innerHTML = '';
-                    Object.entries(config.apps).forEach(([appname, exepath]) => {
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td><input type="text" class="form-control form-control-sm" value="${appname}" data-field="appname" required /></td>
-                            <td><input type="text" class="form-control form-control-sm" value="${exepath}" data-field="exepath" required /></td>
-                            <td><button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Delete</button></td>
-                        `;
-                        tbody.appendChild(row);
+                    Object.entries(cfg.apps).forEach(([k,v]) => {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td><input class="form-control form-control-sm" value="${k}" data-field="appname" required/></td>
+                            <td><input class="form-control form-control-sm" value="${v}" data-field="exepath" required/></td>
+                            <td><button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Del</button></td>`;
+                        tbody.appendChild(tr);
                     });
                 }
-                showStatus('Configuration imported successfully', 'success');
-            } catch (error) {
-                showStatus('Error importing configuration: ' + error.message, 'danger');
+                showStatus('Imported (not saved yet).','success');
+            } catch(err) {
+                showStatus('Import error: '+ err.message,'danger');
             }
         };
         reader.readAsText(file);

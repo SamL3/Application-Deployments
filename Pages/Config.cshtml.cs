@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
 namespace ApplicationDeployment.Pages
@@ -29,8 +30,11 @@ namespace ApplicationDeployment.Pages
         public string StagingPath { get; set; } = string.Empty;
         public List<ServerInfo> ServerList { get; set; } = new();
         public Dictionary<string, string> AppExes { get; set; } = new();
+        public bool ShowAppsOnDashboard { get; set; }
 
         public void OnGet() => LoadCurrentSettings();
+
+        #region Handlers
 
         public IActionResult OnGetTestServer(string hostname)
         {
@@ -60,13 +64,10 @@ namespace ApplicationDeployment.Pages
 
             try
             {
-                var appSettingsPath = Path.Combine(_env.ContentRootPath, "appsettings.json");
-                var json = await System.IO.File.ReadAllTextAsync(appSettingsPath);
-                var dict = JsonSerializer.Deserialize<Dictionary<string, object>>(json) ?? new();
-                dict["StagingPath"] = stagingPath;
-                var updated = JsonSerializer.Serialize(dict, new JsonSerializerOptions { WriteIndented = true });
-                await System.IO.File.WriteAllTextAsync(appSettingsPath, updated);
-                _logger.LogInformation("Updated StagingPath to {Path}", stagingPath);
+                var root = await LoadAppSettingsNodeAsync();
+                root["StagingPath"] = stagingPath;
+                await PersistAppSettingsAsync(root);
+                _logger.LogInformation("Updated StagingPath={Path}", stagingPath);
                 return new JsonResult(new { success = true, message = "Staging path saved" });
             }
             catch (Exception ex)
@@ -119,10 +120,55 @@ namespace ApplicationDeployment.Pages
             }
         }
 
+        // FIXED: Simplified & reliable dashboard option save
+        public async Task<IActionResult> OnPostSaveDashboardOptionsAsync([FromForm] bool showApps)
+        {
+            try
+            {
+                var root = await LoadAppSettingsNodeAsync();
+                var dashboardNode = root["Dashboard"] as JsonObject ?? new JsonObject();
+                dashboardNode["ShowApps"] = showApps;
+                root["Dashboard"] = dashboardNode; // assign back in case it was new
+                await PersistAppSettingsAsync(root);
+
+                _logger.LogInformation("Dashboard:ShowApps set to {Val}", showApps);
+                return new JsonResult(new { success = true, message = "Dashboard options saved", value = showApps });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Save dashboard options failed");
+                return new JsonResult(new { success = false, message = ex.Message });
+            }
+        }
+
+        #endregion
+
+        #region Internal helpers
+
+        private async Task<JsonObject> LoadAppSettingsNodeAsync()
+        {
+            var appSettingsPath = Path.Combine(_env.ContentRootPath, "appsettings.json");
+            if (!System.IO.File.Exists(appSettingsPath))
+                return new JsonObject();
+
+            using var fs = System.IO.File.OpenRead(appSettingsPath);
+            var node = await JsonNode.ParseAsync(fs) as JsonObject;
+            return node ?? new JsonObject();
+        }
+
+        private async Task PersistAppSettingsAsync(JsonObject root)
+        {
+            var appSettingsPath = Path.Combine(_env.ContentRootPath, "appsettings.json");
+            var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            await System.IO.File.WriteAllTextAsync(appSettingsPath, json);
+        }
+
         private void LoadCurrentSettings()
         {
             StagingPath = _config["StagingPath"] ?? string.Empty;
+            ShowAppsOnDashboard = _config.GetValue<bool>("Dashboard:ShowApps", false);
 
+            // Servers CSV
             try
             {
                 var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? "servers.csv");
@@ -150,6 +196,7 @@ namespace ApplicationDeployment.Pages
                 ServerList = new();
             }
 
+            // App exe mappings
             try
             {
                 var path = Path.Combine(_env.WebRootPath, "appExes.json");
@@ -180,5 +227,7 @@ namespace ApplicationDeployment.Pages
         {
             public Dictionary<string, string> Apps { get; set; } = new();
         }
+
+        #endregion
     }
 }

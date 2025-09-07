@@ -8,9 +8,10 @@
     <h1 class="display-5 text-primary mb-4">Application Deployment</h1>
 
     <div class="row g-4">
-        <!-- LEFT: Servers + Env Filters -->
+        <!-- LEFT: Servers + Actions (stacked) -->
         <div class="col-lg-3">
-            <div class="card h-100 shadow-sm">
+            <!-- Servers Card -->
+            <div class="card shadow-sm mb-4">
                 <div class="card-header bg-light fw-semibold">Destination Servers</div>
                 <div class="card-body d-flex flex-column">
                     <label class="form-label small">Servers</label>
@@ -54,16 +55,38 @@
                         }
                     </div>
 
-                    <div class="mt-auto small text-muted">
-                        Use filters to limit visible builds in center column.
+                    <div class="small text-muted">
+                        Use filters to limit visible builds.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions Card (moved below Servers) -->
+            <div class="card shadow-sm">
+                <div class="card-header bg-light fw-semibold">Actions</div>
+                <div class="card-body d-flex flex-column">
+                    <div class="mb-3">
+                        <button type="submit" class="btn btn-primary w-100 mb-2">Deploy Selected</button>
+                        <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100">Clear Selection</button>
+                    </div>
+
+                    <div class="small mb-2"><strong>Selected Builds</strong></div>
+                    <div id="selectionSummary" class="small mb-3" style="max-height:120px; overflow:auto;">(none)</div>
+
+                    <div id="progressContainer" class="d-none">
+                        <div class="small text-muted mb-1">Progress</div>
+                        <div class="progress mb-2" style="height:20px;">
+                            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%">0%</div>
+                        </div>
+                        <pre id="statusMessage" class="small bg-light p-2 rounded" style="height:160px; overflow:auto;"></pre>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- CENTER: Apps as separate cards with scrollable multiselect build lists -->
-        <div class="col-lg-6">
-            <div class="row row-cols-1 row-cols-md-2 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
+        <!-- CENTER: Apps -->
+        <div class="col-lg-9">
+            <div class="row row-cols-1 row-cols-md-3 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
                 @if (Model.AppBuildGroups == null || Model.AppBuildGroups.Count == 0)
                 {
                     <div class="col">
@@ -74,7 +97,6 @@
                 {
                     foreach (var group in Model.AppBuildGroups.OrderBy(g => g.AppName))
                     {
-                        var safeApp = Html.Raw(group.AppName);
                         <div class="col">
                             <div class="card h-100 shadow-sm app-card" data-app="@group.AppName">
                                 <div class="card-header d-flex justify-content-between align-items-center">
@@ -108,30 +130,6 @@
                         </div>
                     }
                 }
-            </div>
-        </div>
-
-        <!-- RIGHT: Actions and Progress -->
-        <div class="col-lg-3">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header bg-light fw-semibold">Actions</div>
-                <div class="card-body d-flex flex-column">
-                    <div class="mb-3">
-                        <button type="submit" class="btn btn-primary w-100 mb-2">Deploy Selected</button>
-                        <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100">Clear Selection</button>
-                    </div>
-
-                    <div class="small mb-2"><strong>Selected Builds</strong></div>
-                    <div id="selectionSummary" class="small mb-3" style="max-height:120px; overflow:auto;">(none)</div>
-
-                    <div id="progressContainer" class="d-none mt-auto">
-                        <div class="small text-muted mb-1">Progress</div>
-                        <div class="progress mb-2" style="height:20px;">
-                            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%">0%</div>
-                        </div>
-                        <pre id="statusMessage" class="small bg-light p-2 rounded" style="height:160px; overflow:auto;"></pre>
-                    </div>
-                </div>
             </div>
         </div>
     </div>

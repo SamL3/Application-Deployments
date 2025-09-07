@@ -1,7 +1,9 @@
 @page
 @model ApplicationDeployment.Pages.DashboardModel
+@inject IConfiguration Configuration
 @{
     ViewData["Title"] = "Dashboard";
+    var showApps = Configuration.GetValue<bool>("Dashboard:ShowApps", false);
 }
 
 <div class="container-fluid py-3">
@@ -14,11 +16,10 @@
 
 @section Scripts {
 <style>
-    .server-card { min-height: 420px; position: relative; }
-    .apps-list, .builds-list { font-size: .8rem; max-height: 150px; overflow:auto; }
+    .server-card { min-height: 360px; position: relative; }
+    .builds-list { font-size: .8rem; max-height: 160px; overflow:auto; }
     .spinner-sm { width:1.5rem; height:1.5rem; }
     .progress { background-color:#e9ecef; }
-    .badge-size { font-weight:500; }
     .section-title { font-size:.75rem; letter-spacing:.05em; text-transform:uppercase; margin-top:.75rem; color:#6c757d;}
     .collapse-toggle { cursor:pointer; }
     .builds-list table td { padding:.25rem .5rem; }
@@ -27,6 +28,7 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+    const SHOW_APPS = @(showApps ? "true" : "false");
     const serversRow = document.getElementById('serversRow');
 
     loadServers();
@@ -62,12 +64,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="spinner-border spinner-sm text-secondary" role="status"></div>
             </div>
             <div class="card-body p-2">
-                <div class="section-title mt-0">Disk</div>
+                <div class="section-title mt-0">Disk (C:)</div>
                 <div class="disk-area small text-muted">Loading...</div>
                 <div class="section-title">Deployments</div>
                 <div class="deployments-area small text-muted">Loading...</div>
-                <div class="section-title">Applications</div>
-                <div class="apps-area small text-muted">Loading...</div>
+                ${SHOW_APPS ? `
+                    <div class="section-title">Applications</div>
+                    <div class="apps-area small text-muted">Loading...</div>` : ``}
             </div>
             <div class="card-footer bg-light py-1 text-end small text-muted status-line">Loading...</div>
         </div>`;
@@ -89,12 +92,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
             renderDisks(diskArea, data.disks || []);
             renderDeployments(deploymentsArea, data.deployments || []);
-            renderApps(appsArea, data.apps || []);
-            statusLine.textContent = `Apps: ${(data.apps||[]).length} | Builds: ${data.totalBuildCount ?? 0} | Size: ${(data.totalBuildSizeMB ?? 0).toFixed(1)} MB`;
+            if (SHOW_APPS && appsArea) {
+                renderApps(appsArea, data.apps || []);
+            }
+            statusLine.textContent =
+                (SHOW_APPS ? `Apps: ${(data.apps||[]).length} | ` : '') +
+                `Builds: ${data.totalBuildCount ?? 0} | Size: ${(data.totalBuildSizeMB ?? 0).toFixed(1)} MB`;
         } catch (e) {
             diskArea.innerHTML = `<span class="text-danger">Error</span>`;
             deploymentsArea.innerHTML = `<span class="text-danger">Error: ${escapeHtml(e.message)}</span>`;
-            appsArea.innerHTML = `<span class="text-danger">Error</span>`;
+            if (appsArea) appsArea.innerHTML = `<span class="text-danger">Error</span>`;
             statusLine.textContent = 'Error';
         } finally {
             if (spinner) spinner.remove();

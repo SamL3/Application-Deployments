@@ -7,11 +7,12 @@
 <form id="maintenanceForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
     <div class="row g-4">
+        <!-- LEFT COLUMN: Servers + Actions stacked -->
         <div class="col-lg-3">
-            <div class="card h-100 shadow-sm">
+            <div class="card shadow-sm mb-4">
                 <div class="card-header">Servers</div>
                 <div class="card-body p-2">
-                    <div class="table-responsive" style="max-height:400px; overflow:auto;">
+                    <div class="table-responsive" style="max-height:320px; overflow:auto;">
                         <table class="table table-sm table-hover mb-2">
                             <thead class="table-light sticky-top">
                                 <tr>
@@ -43,40 +44,37 @@
                     <div id="selectedServersInfo" class="small text-muted mt-2">No servers selected</div>
                 </div>
             </div>
+
+            <div class="card shadow-sm">
+                <div class="card-header">Actions</div>
+                <div class="card-body d-flex flex-column">
+                    <div id="selectedInfo" class="mb-3 small text-muted">No selection</div>
+                    <button type="button" id="loadDeploymentsBtn" class="btn btn-primary mb-2" disabled>Load Deployments</button>
+                    <button type="button" id="refreshDeploymentsBtn" class="btn btn-outline-secondary mb-2" disabled>Refresh</button>
+                    <button type="button" id="selectAllBuilds" class="btn btn-outline-secondary mb-2" disabled>Select All Builds</button>
+                    <button type="button" id="removeSelectedBuildsBtn" class="btn btn-danger mb-2" disabled>Remove Selected Builds</button>
+                    <div id="maintenanceStatus" class="small text-muted mt-auto">Ready</div>
+                </div>
+            </div>
         </div>
 
-        <div class="col-lg-6">
-            <div class="card h-100 shadow-sm">
+        <!-- CENTER: Deployments -->
+        <div class="col-lg-9">
+            <div class="card shadow-sm h-100">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <span>Deployments on Selected Servers</span>
-                    <div>
-                        <button type="button" id="selectAllBuilds" class="btn btn-sm btn-outline-secondary me-2" disabled>Select All Builds</button>
-                        <button type="button" id="removeSelectedBuildsBtn" class="btn btn-sm btn-danger" disabled>Remove Selected Builds</button>
-                    </div>
                 </div>
-                <div class="card-body p-2" style="max-height:70vh; overflow:auto;">
+                <div class="card-body p-2" style="max-height:75vh; overflow:auto;">
                     <div id="deploymentsContainer" class="row g-3">
                         <div class="col-12 text-muted">Select server(s) to view deployments.</div>
                     </div>
                 </div>
             </div>
         </div>
-
-        <div class="col-lg-3">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header">Actions</div>
-                <div class="card-body d-flex flex-column">
-                    <div id="selectedInfo" class="mb-3 small text-muted">No selection</div>
-                    <button type="button" id="loadDeploymentsBtn" class="btn btn-primary mb-2" disabled>Load Deployments</button>
-                    <button type="button" id="refreshDeploymentsBtn" class="btn btn-outline-secondary mb-2" disabled>Refresh</button>
-                    <div id="maintenanceStatus" class="small text-muted mt-auto">Ready</div>
-                </div>
-            </div>
-        </div>
     </div>
 </form>
 
-<!-- Confirmation modal (Bootstrap) -->
+<!-- Confirmation modal (unchanged) -->
 <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">

@@ -4,13 +4,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Management;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace ApplicationDeployment.Pages
 {
@@ -27,21 +24,26 @@ namespace ApplicationDeployment.Pages
             _logger = logger;
         }
 
-        public void OnGet() { /* Initial page shell only; data via AJAX */ }
+        private bool ShowApps => _config.GetValue<bool>("Dashboard:ShowApps", false);
+        private string RootApps => _config["CSTApps"] ?? string.Empty;
 
-        // GET: /Dashboard?handler=Servers
+        public void OnGet() { }
+
         public IActionResult OnGetServers()
         {
             try
             {
                 var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? throw new InvalidOperationException("CsvFilePath not configured"));
-                if (!System.IO.File.Exists(csvPath)) return new JsonResult(Array.Empty<string>());
+                if (!System.IO.File.Exists(csvPath))
+                    return new JsonResult(Array.Empty<string>());
+
                 var servers = System.IO.File.ReadAllLines(csvPath)
                     .Where(l => !string.IsNullOrWhiteSpace(l))
                     .Select(l => l.Split(',', StringSplitOptions.TrimEntries)[0])
                     .Where(s => !string.IsNullOrWhiteSpace(s))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
+
                 return new JsonResult(servers);
             }
             catch (Exception ex)
@@ -51,7 +53,6 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        // GET: /Dashboard?handler=ServerDetails&server=HOST
         public IActionResult OnGetServerDetails(string server)
         {
             if (string.IsNullOrWhiteSpace(server))
@@ -59,9 +60,24 @@ namespace ApplicationDeployment.Pages
 
             try
             {
-                var disks = GetRemoteLogicalDisks(server);
-                var apps = GetRemoteInstalledApps(server);
-                var deployments = GetDeployments(server, _config["CSTApps"] ?? string.Empty);
+                var disks = GetRemoteLogicalDisks(server)
+                    .Where(d => d.Name.Equals("C:", StringComparison.OrdinalIgnoreCase)) // Only C:
+                    .ToList();
+
+                var deployments = GetDeployments(server, RootApps);
+
+                // Only enumerate installed apps if enabled; otherwise keep empty list
+                var installedApps = ShowApps ? GetRemoteInstalledApps(server) : new List<InstalledApp>();
+
+                // Project to a stable DTO type to avoid ternary anonymous type issue
+                var appPayload = ShowApps
+                    ? installedApps.Select(a => new AppInfo
+                    {
+                        DisplayName = a.DisplayName,
+                        DisplayVersion = a.DisplayVersion,
+                        Publisher = a.Publisher
+                    }).ToList()
+                    : new List<AppInfo>();
 
                 var totalBuildSizeMB = deployments.Sum(d => d.TotalSizeMB);
                 var totalBuildCount = deployments.Sum(d => d.BuildCount);
@@ -70,7 +86,6 @@ namespace ApplicationDeployment.Pages
                 {
                     server,
                     disks = disks.Select(d => new { name = d.Name, volumeName = d.VolumeName, size = d.Size, free = d.Free }),
-                    apps = apps.Select(a => new { displayName = a.DisplayName, displayVersion = a.DisplayVersion, publisher = a.Publisher }),
                     deployments = deployments.Select(d => new
                     {
                         app = d.App,
@@ -78,8 +93,10 @@ namespace ApplicationDeployment.Pages
                         totalSizeMB = d.TotalSizeMB,
                         builds = d.Builds.Select(b => new { name = b.Name, sizeMB = b.SizeMB })
                     }),
+                    apps = appPayload,          // always a List<AppInfo>
                     totalBuildSizeMB,
-                    totalBuildCount
+                    totalBuildCount,
+                    showApps = ShowApps
                 });
             }
             catch (Exception ex)
@@ -89,7 +106,7 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        #region Disk / Apps
+        #region Disk / Apps / Deployments
 
         private class DiskInfo
         {
@@ -127,7 +144,7 @@ namespace ApplicationDeployment.Pages
                             Free = mo["FreeSpace"] != null ? Convert.ToInt64(mo["FreeSpace"]) : 0
                         });
                     }
-                    catch { /* skip malformed */ }
+                    catch { }
                 }
             }
             catch (Exception ex)
@@ -138,6 +155,14 @@ namespace ApplicationDeployment.Pages
         }
 
         private class InstalledApp
+        {
+            public string DisplayName { get; set; } = string.Empty;
+            public string? DisplayVersion { get; set; }
+            public string? Publisher { get; set; }
+        }
+
+        // DTO for JSON projection (stable type)
+        private class AppInfo
         {
             public string DisplayName { get; set; } = string.Empty;
             public string? DisplayVersion { get; set; }
@@ -195,10 +220,6 @@ namespace ApplicationDeployment.Pages
                 .ToList();
         }
 
-        #endregion
-
-        #region Deployments
-
         private record BuildItem(string Name, double SizeMB);
         private record AppDeployment(string App, List<BuildItem> Builds)
         {
@@ -221,26 +242,19 @@ namespace ApplicationDeployment.Pages
                     var appName = Path.GetFileName(appDir);
                     var buildItems = new List<BuildItem>();
 
-                    try
+                    foreach (var buildDir in Directory.GetDirectories(appDir))
                     {
-                        foreach (var buildDir in Directory.GetDirectories(appDir))
+                        var buildName = Path.GetFileName(buildDir);
+                        double sizeMB = 0;
+                        try
                         {
-                            var buildName = Path.GetFileName(buildDir);
-                            double sizeMB = 0;
-                            try
-                            {
-                                sizeMB = Math.Round(GetDirectorySize(buildDir) / (1024.0 * 1024.0), 2);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogDebug(ex, "Size failed for {BuildDir}", buildDir);
-                            }
-                            buildItems.Add(new BuildItem(buildName, sizeMB));
+                            sizeMB = Math.Round(GetDirectorySize(buildDir) / (1024.0 * 1024.0), 2);
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Failed enumerating builds for {App} on {Server}", appName, server);
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Size failed for {BuildDir}", buildDir);
+                        }
+                        buildItems.Add(new BuildItem(buildName, sizeMB));
                     }
 
                     buildItems = buildItems
