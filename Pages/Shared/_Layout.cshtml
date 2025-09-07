@@ -19,13 +19,14 @@
             </button>
             <div class="collapse navbar-collapse" id="mainNav">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                    <li class="nav-item"><a class="nav-link" asp-area="" asp-page="/Dashboard">Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link" asp-area="" asp-page="/Deploy">Deploy</a></li>
-                    <li class="nav-item"><a class="nav-link" asp-area="" asp-page="/Remove">Remove</a></li>
-                    <li class="nav-item"><a class="nav-link" asp-area="" asp-page="/Config">Config</a></li>
+                    <li class="nav-item"><a class="nav-link" asp-page="/Dashboard">Dashboard</a></li>
+                    <li class="nav-item"><a class="nav-link" asp-page="/Deploy">Deploy</a></li>
+                    <li class="nav-item"><a class="nav-link" asp-page="/Remove">Remove</a></li>
+                    <li class="nav-item"><a class="nav-link" asp-page="/Test">Test</a></li>
+                    <li class="nav-item"><a class="nav-link" asp-page="/Config">Config</a></li>
                 </ul>
                 <ul class="navbar-nav">
-                    <li class="nav-item"><a class="nav-link" asp-area="" asp-page="/Privacy">Privacy</a></li>
+                    <li class="nav-item"><a class="nav-link" asp-page="/Privacy">Privacy</a></li>
                 </ul>
             </div>
         </div>
@@ -38,7 +39,7 @@
 </div>
 <footer class="border-top footer text-muted">
     <div class="container">
-        &copy; @DateTime.Now.Year - Application_Deployments - <a asp-area="" asp-page="/Privacy">Privacy</a>
+        &copy; @DateTime.Now.Year - Application Deployments </a>
     </div>
 </footer>
 <script src="~/lib/jquery/dist/jquery.min.js"></script>

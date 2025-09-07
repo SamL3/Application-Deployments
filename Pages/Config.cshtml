@@ -7,19 +7,17 @@
     @Html.AntiForgeryToken()
 
     <div class="row g-4">
-        <!-- Dashboard Options (ensure single instance) -->
+        <!-- Dashboard Options -->
         <div class="col-lg-4">
-            <div class="card shadow-sm h-100" id="dashboardOptionsCard">
+            <div class="card shadow-sm h-100">
                 <div class="card-header bg-dark text-white">
                     <h5 class="mb-0">Dashboard Options</h5>
                 </div>
                 <div class="card-body">
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" id="showAppsToggle" @(Model.ShowAppsOnDashboard ? "checked" : "") />
-                        <label class="form-check-label" for="showAppsToggle">
-                            Show Installed Applications Section
-                        </label>
-                        <div class="form-text">Remote registry enumeration can slow loading.</div>
+                        <label class="form-check-label" for="showAppsToggle">Show Installed Applications Section</label>
+                        <div class="form-text">May slow load (remote registry).</div>
                     </div>
                     <button type="button" class="btn btn-sm btn-primary" id="saveDashboardOptions">Save Dashboard Options</button>
                     <div class="small text-muted mt-2" id="dashboardOptionsStatus"></div>
@@ -42,7 +40,7 @@
             </div>
         </div>
 
-        <!-- Server List -->
+        <!-- Servers -->
         <div class="col-lg-4">
             <div class="card shadow-sm h-100">
                 <div class="card-header bg-info text-white d-flex justify-content-between">
@@ -55,11 +53,7 @@
                 <div class="card-body">
                     <div class="table-responsive" style="max-height:260px;">
                         <table class="table table-sm table-hover mb-0">
-                            <thead class="table-light">
-                                <tr>
-                                    <th>Host</th><th>User</th><th>Description</th><th style="width:55px;"></th>
-                                </tr>
-                            </thead>
+                            <thead class="table-light"><tr><th>Host</th><th>User</th><th>Description</th><th style="width:55px;"></th></tr></thead>
                             <tbody id="serversTableBody">
                             @foreach (var s in Model.ServerList)
                             {
@@ -91,9 +85,7 @@
                 <div class="card-body">
                     <div class="table-responsive" style="max-height:260px;">
                         <table class="table table-sm table-hover mb-0">
-                            <thead class="table-light">
-                                <tr><th>App</th><th>Exe Path</th><th style="width:55px;"></th></tr>
-                            </thead>
+                            <thead class="table-light"><tr><th>App</th><th>Exe Path</th><th style="width:55px;"></th></tr></thead>
                             <tbody id="appsTableBody">
                             @foreach (var a in Model.AppExes)
                             {
@@ -106,37 +98,83 @@
                             </tbody>
                         </table>
                     </div>
-                    <div class="small text-muted mt-2">Used for managing processes.</div>
+                    <div class="small text-muted mt-2">Used for process operations.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Tests Configuration -->
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-secondary text-white d-flex justify-content-between">
+                    <span>API Tests (PowerShell)</span>
+                    <span>
+                        <button type="button" class="btn btn-light btn-sm" id="addApiTestBtn">Add Test</button>
+                        <button type="button" class="btn btn-success btn-sm" id="saveApiTestsBtn">Save All</button>
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div id="apiTestsContainer" class="mb-2" style="max-height:300px; overflow:auto;">
+                        @if (Model.ApiTests.Count == 0)
+                        {
+                            <div class="text-muted small">No API tests defined.</div>
+                        }
+                        else
+                        {
+                            foreach (var t in Model.ApiTests)
+                            {
+                                <div class="border rounded p-2 mb-2 api-test" data-id="@t.Id">
+                                    <div class="row g-2 mb-1">
+                                        <div class="col-8">
+                                            <input class="form-control form-control-sm api-desc" value="@t.Description" placeholder="Description" />
+                                        </div>
+                                        <div class="col-4 text-end">
+                                            <button type="button" class="btn btn-outline-danger btn-sm delete-test-btn">Delete</button>
+                                        </div>
+                                    </div>
+                                    <input class="form-control form-control-sm mb-2 api-path" value="@t.ScriptPath" placeholder="Full script path (ps1 or exe)" />
+                                    <div class="small fw-semibold mb-1">Parameters</div>
+                                    <div class="params" style="max-height:120px; overflow:auto;">
+                                        @if (t.Parameters.Count == 0)
+                                        {
+                                            <div class="text-muted small empty-params">No parameters</div>
+                                        }
+                                        else
+                                        {
+                                            foreach (var p in t.Parameters)
+                                            {
+                                                <div class="input-group input-group-sm mb-1 param-row">
+                                                    <input class="form-control param-name" placeholder="Name" value="@p.Name" />
+                                                    <input class="form-control param-value" placeholder="Value" value="@p.Value" />
+                                                    <button type="button" class="btn btn-outline-danger param-del-btn">&times;</button>
+                                                </div>
+                                            }
+                                        }
+                                    </div>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm add-param-btn mt-1">Add Param</button>
+                                </div>
+                            }
+                        }
+                    </div>
+                    <div class="small text-muted">Executed on Test page as: scriptPath + each parameter as "-p Name Value".</div>
+                    <div id="apiTestsStatus" class="small mt-2 text-muted"></div>
                 </div>
             </div>
         </div>
 
         <!-- Summary -->
-        <div class="col-lg-6">
-            <div class="card shadow-sm h-100">
-                <div class="card-header bg-light">Status</div>
+        <div class="col-12">
+            <div class="card shadow-sm">
+                <div class="card-header bg-light">Status & Export</div>
                 <div class="card-body">
                     <div id="statusArea" class="alert alert-info d-none py-2 mb-3">
                         <span id="statusMessage">Ready</span>
                     </div>
-                    <div class="row text-center">
-                        <div class="col-4">
-                            <div class="h4 mb-0" id="serverCount">@Model.ServerList.Count</div>
-                            <small class="text-muted">Servers</small>
-                        </div>
-                        <div class="col-4">
-                            <div class="h4 mb-0" id="appCount">@Model.AppExes.Count</div>
-                            <small class="text-muted">Apps</small>
-                        </div>
-                        <div class="col-4">
-                            <div class="h4 mb-0">@((Model.ShowAppsOnDashboard) ? "Apps On" : "Apps Off")</div>
-                            <small class="text-muted">Dashboard</small>
-                        </div>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportConfiguration()">Export Config</button>
+                        <input type="file" id="importConfig" accept=".json" class="d-none" onchange="importConfiguration(event)" />
+                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="document.getElementById('importConfig').click()">Import Config</button>
                     </div>
-                    <hr />
-                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportConfiguration()">Export Config</button>
-                    <input type="file" id="importConfig" accept=".json" class="d-none" onchange="importConfiguration(event)" />
-                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="document.getElementById('importConfig').click()">Import Config</button>
                 </div>
             </div>
         </div>
@@ -147,21 +185,107 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
-    const statusArea = document.getElementById('statusArea');
-    const statusMessage = document.getElementById('statusMessage');
-    const dashboardOptionsStatus = document.getElementById('dashboardOptionsStatus');
+    const apiTestsContainer = document.getElementById('apiTestsContainer');
+    const apiTestsStatus = document.getElementById('apiTestsStatus');
 
-    function showStatus(msg, type='info', hold=false) {
-        statusArea.className = `alert alert-${type} py-2`;
-        statusMessage.textContent = msg;
-        statusArea.classList.remove('d-none');
-        if (!hold) setTimeout(()=>statusArea.classList.add('d-none'), 3500);
+    function newTestCard(id='') {
+        if(!id) id = crypto.randomUUID().replace(/-/g,'');
+        const div = document.createElement('div');
+        div.className = 'border rounded p-2 mb-2 api-test';
+        div.dataset.id = id;
+        div.innerHTML = `
+            <div class="row g-2 mb-1">
+                <div class="col-8">
+                    <input class="form-control form-control-sm api-desc" placeholder="Description" />
+                </div>
+                <div class="col-4 text-end">
+                    <button type="button" class="btn btn-outline-danger btn-sm delete-test-btn">Delete</button>
+                </div>
+            </div>
+            <input class="form-control form-control-sm mb-2 api-path" placeholder="Full script path (ps1 or exe)" />
+            <div class="small fw-semibold mb-1">Parameters</div>
+            <div class="params" style="max-height:120px; overflow:auto;">
+                <div class="text-muted small empty-params">No parameters</div>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm add-param-btn mt-1">Add Param</button>`;
+        return div;
     }
+
+    function addParamRow(paramsDiv, name='', value='') {
+        const empty = paramsDiv.querySelector('.empty-params');
+        if (empty) empty.remove();
+        const row = document.createElement('div');
+        row.className = 'input-group input-group-sm mb-1 param-row';
+        row.innerHTML = `
+            <input class="form-control param-name" placeholder="Name" value="${name}" />
+            <input class="form-control param-value" placeholder="Value" value="${value}" />
+            <button type="button" class="btn btn-outline-danger param-del-btn">&times;</button>`;
+        paramsDiv.appendChild(row);
+    }
+
+    document.getElementById('addApiTestBtn').addEventListener('click', () => {
+        apiTestsContainer.appendChild(newTestCard());
+    });
+
+    apiTestsContainer.addEventListener('click', e => {
+        if (e.target.classList.contains('delete-test-btn')) {
+            e.target.closest('.api-test').remove();
+        } else if (e.target.classList.contains('add-param-btn')) {
+            const paramsDiv = e.target.closest('.api-test').querySelector('.params');
+            addParamRow(paramsDiv);
+        } else if (e.target.classList.contains('param-del-btn')) {
+            const paramRow = e.target.closest('.param-row');
+            const paramsDiv = e.target.closest('.params');
+            paramRow.remove();
+            if (paramsDiv.querySelectorAll('.param-row').length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'text-muted small empty-params';
+                empty.textContent = 'No parameters';
+                paramsDiv.appendChild(empty);
+            }
+        }
+    });
+
+    document.getElementById('saveApiTestsBtn').addEventListener('click', async () => {
+        apiTestsStatus.textContent = 'Saving...';
+        const tests = [];
+        apiTestsContainer.querySelectorAll('.api-test').forEach(card => {
+            const id = card.dataset.id;
+            const desc = card.querySelector('.api-desc').value.trim();
+            const path = card.querySelector('.api-path').value.trim();
+            if (!path) return; // skip invalid
+            const params = [];
+            card.querySelectorAll('.param-row').forEach(pr => {
+                const name = pr.querySelector('.param-name').value.trim();
+                const value = pr.querySelector('.param-value').value.trim();
+                if (name) params.push({ name, value });
+            });
+            tests.push({ id, description: desc, scriptPath: path, parameters: params });
+        });
+
+        try {
+            const resp = await fetch('/Config?handler=SaveApiTests', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/json',
+                    'RequestVerificationToken': token
+                },
+                body: JSON.stringify({ tests })
+            });
+            const result = await resp.json();
+            apiTestsStatus.textContent = result.message;
+            apiTestsStatus.className = result.success ? 'small text-success' : 'small text-danger';
+        } catch(e) {
+            apiTestsStatus.textContent = 'Error: ' + e.message;
+            apiTestsStatus.className = 'small text-danger';
+        }
+    });
 
     // Dashboard options save
     document.getElementById('saveDashboardOptions').addEventListener('click', async () => {
         const showApps = document.getElementById('showAppsToggle').checked;
-        dashboardOptionsStatus.textContent = 'Saving...';
+        const el = document.getElementById('dashboardOptionsStatus');
+        el.textContent = 'Saving...';
         try {
             const resp = await fetch('/Config?handler=SaveDashboardOptions', {
                 method:'POST',
@@ -172,12 +296,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 body:new URLSearchParams({ showApps })
             });
             const result = await resp.json();
-            dashboardOptionsStatus.textContent = result.message;
-            dashboardOptionsStatus.className = result.success ? 'text-success small' : 'text-danger small';
-            if (result.success) showStatus('Dashboard option updated. (Reload to apply.)','success');
+            el.textContent = result.message;
+            el.className = result.success ? 'text-success small' : 'text-danger small';
         } catch(e) {
-            dashboardOptionsStatus.textContent = 'Error: ' + e.message;
-            dashboardOptionsStatus.className = 'text-danger small';
+            el.textContent = 'Error: '+ e.message;
+            el.className = 'text-danger small';
         }
     });
 
@@ -192,7 +315,12 @@ document.addEventListener('DOMContentLoaded', () => {
             <td><button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button></td>`;
         tbody.appendChild(tr);
     });
-
+    document.addEventListener('click', e => {
+        if (e.target.classList.contains('delete-server-btn'))
+            e.target.closest('tr').remove();
+        if (e.target.classList.contains('delete-app-btn'))
+            e.target.closest('tr').remove();
+    });
     document.getElementById('saveServersBtn').addEventListener('click', async () => {
         const servers = [];
         document.querySelectorAll('#serversTableBody tr').forEach(tr => {
@@ -231,7 +359,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <td><button type="button" class="btn btn-outline-danger btn-sm delete-app-btn">Del</button></td>`;
         tbody.appendChild(tr);
     });
-
     document.getElementById('saveAppsBtn').addEventListener('click', async () => {
         const apps = {};
         document.querySelectorAll('#appsTableBody tr').forEach(tr => {
@@ -256,14 +383,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Delete row handlers (servers & apps)
-    document.addEventListener('click', e => {
-        if (e.target.classList.contains('delete-server-btn') ||
-            e.target.classList.contains('delete-app-btn')) {
-            e.target.closest('tr').remove();
-        }
-    });
-
     // Staging path
     document.getElementById('saveStagingPath').addEventListener('click', async () => {
         const stagingPath = document.getElementById('stagingPath').value.trim();
@@ -284,7 +403,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Export / Import
+    // Export / Import unchanged (adds api tests now if needed)
     window.exportConfiguration = function() {
         const servers = [];
         document.querySelectorAll('#serversTableBody tr').forEach(tr => {
@@ -302,10 +421,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const p = tr.querySelector('[data-field="exepath"]').value.trim();
             if (a && p) apps[a] = p;
         });
+        const tests = [];
+        apiTestsContainer.querySelectorAll('.api-test').forEach(card => {
+            const id = card.dataset.id;
+            const description = card.querySelector('.api-desc').value.trim();
+            const scriptPath = card.querySelector('.api-path').value.trim();
+            const parameters = [];
+            card.querySelectorAll('.param-row').forEach(pr => {
+                const name = pr.querySelector('.param-name').value.trim();
+                const value = pr.querySelector('.param-value').value.trim();
+                if (name) parameters.push({ name, value });
+            });
+            if(scriptPath) tests.push({ id, description, scriptPath, parameters });
+        });
         const cfg = {
             stagingPath: document.getElementById('stagingPath').value,
             showAppsOnDashboard: document.getElementById('showAppsToggle').checked,
-            servers, apps,
+            servers, apps, apiTests: tests,
             exported: new Date().toISOString()
         };
         const blob = new Blob([JSON.stringify(cfg,null,2)], {type:'application/json'});
@@ -327,6 +459,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (cfg.stagingPath) document.getElementById('stagingPath').value = cfg.stagingPath;
                 if (typeof cfg.showAppsOnDashboard === 'boolean')
                     document.getElementById('showAppsToggle').checked = cfg.showAppsOnDashboard;
+
                 if (cfg.servers) {
                     const tbody = document.getElementById('serversTableBody');
                     tbody.innerHTML = '';
@@ -352,13 +485,38 @@ document.addEventListener('DOMContentLoaded', () => {
                         tbody.appendChild(tr);
                     });
                 }
-                showStatus('Imported (not saved yet).','success');
+                if (cfg.apiTests) {
+                    apiTestsContainer.innerHTML = '';
+                    cfg.apiTests.forEach(t => {
+                        const card = newTestCard(t.id);
+                        card.querySelector('.api-desc').value = t.description || '';
+                        card.querySelector('.api-path').value = t.scriptPath || '';
+                        const paramsDiv = card.querySelector('.params');
+                        paramsDiv.innerHTML = '';
+                        if (t.parameters && t.parameters.length) {
+                            t.parameters.forEach(p => addParamRow(paramsDiv, p.name || '', p.value || ''));
+                        } else {
+                            paramsDiv.innerHTML = '<div class="text-muted small empty-params">No parameters</div>';
+                        }
+                        apiTestsContainer.appendChild(card);
+                    });
+                }
+                showStatus('Imported (not saved).','success');
             } catch(err) {
                 showStatus('Import error: '+ err.message,'danger');
             }
         };
         reader.readAsText(file);
     };
+
+    function showStatus(msg,type='info'){
+        const statusArea = document.getElementById('statusArea');
+        const statusMessage = document.getElementById('statusMessage');
+        statusArea.className = `alert alert-${type} py-2`;
+        statusMessage.textContent = msg;
+        statusArea.classList.remove('d-none');
+        setTimeout(()=>statusArea.classList.add('d-none'), 3500);
+    }
 });
 </script>
 }

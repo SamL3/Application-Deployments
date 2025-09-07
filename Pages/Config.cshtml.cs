@@ -31,16 +31,43 @@ namespace ApplicationDeployment.Pages
         public List<ServerInfo> ServerList { get; set; } = new();
         public Dictionary<string, string> AppExes { get; set; } = new();
         public bool ShowAppsOnDashboard { get; set; }
+        public List<ApiTestConfig> ApiTests { get; set; } = new();
 
-        public void OnGet() => LoadCurrentSettings();
+        private string ApiTestsFile => Path.Combine(_env.WebRootPath, "apiTests.json");
 
-        #region Handlers
+        public void OnGet()
+        {
+            LoadCurrentSettings();
+            ApiTests = LoadApiTests();
+        }
+
+        #region New API Test Models
+        public class ApiTestConfig
+        {
+            public string Id { get; set; } = Guid.NewGuid().ToString("N");
+            public string Description { get; set; } = string.Empty;
+            public string ScriptPath { get; set; } = string.Empty;
+            public List<ApiParam> Parameters { get; set; } = new();
+        }
+
+        public class ApiParam
+        {
+            public string Name { get; set; } = string.Empty;
+            public string Value { get; set; } = string.Empty;
+        }
+
+        public class ApiTestsRequest
+        {
+            public List<ApiTestConfig> Tests { get; set; } = new();
+        }
+        #endregion
+
+        #region Handlers (existing + new)
 
         public IActionResult OnGetTestServer(string hostname)
         {
             if (string.IsNullOrWhiteSpace(hostname))
                 return new JsonResult(new { success = false, message = "Hostname required" });
-
             try
             {
                 var accessible = Directory.Exists($@"\\{hostname}\C$");
@@ -81,7 +108,6 @@ namespace ApplicationDeployment.Pages
         {
             if (request?.Servers == null)
                 return new JsonResult(new { success = false, message = "Invalid server data" });
-
             try
             {
                 var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? "servers.csv");
@@ -104,7 +130,6 @@ namespace ApplicationDeployment.Pages
         {
             if (request?.Apps == null)
                 return new JsonResult(new { success = false, message = "Invalid apps data" });
-
             try
             {
                 var path = Path.Combine(_env.WebRootPath, "appExes.json");
@@ -120,7 +145,6 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        // FIXED: Simplified & reliable dashboard option save
         public async Task<IActionResult> OnPostSaveDashboardOptionsAsync([FromForm] bool showApps)
         {
             try
@@ -128,9 +152,8 @@ namespace ApplicationDeployment.Pages
                 var root = await LoadAppSettingsNodeAsync();
                 var dashboardNode = root["Dashboard"] as JsonObject ?? new JsonObject();
                 dashboardNode["ShowApps"] = showApps;
-                root["Dashboard"] = dashboardNode; // assign back in case it was new
+                root["Dashboard"] = dashboardNode;
                 await PersistAppSettingsAsync(root);
-
                 _logger.LogInformation("Dashboard:ShowApps set to {Val}", showApps);
                 return new JsonResult(new { success = true, message = "Dashboard options saved", value = showApps });
             }
@@ -141,9 +164,78 @@ namespace ApplicationDeployment.Pages
             }
         }
 
+        // NEW: Save API Tests
+        public async Task<IActionResult> OnPostSaveApiTestsAsync([FromBody] ApiTestsRequest request)
+        {
+            try
+            {
+                if (request?.Tests == null)
+                    return new JsonResult(new { success = false, message = "Invalid test data" });
+
+                // Basic validation + path safety (deny dangerous chars)
+                foreach (var t in request.Tests)
+                {
+                    t.ScriptPath = t.ScriptPath?.Trim() ?? "";
+                    if (string.IsNullOrWhiteSpace(t.ScriptPath))
+                        return new JsonResult(new { success = false, message = "Script path required for all tests" });
+                    if (t.ScriptPath.IndexOfAny(new[] { '|', ';', '&' }) >= 0)
+                        return new JsonResult(new { success = false, message = $"Illegal character in script path: {t.ScriptPath}" });
+                    t.Description = t.Description?.Trim() ?? "";
+                    t.Parameters = t.Parameters?.Where(p => !string.IsNullOrWhiteSpace(p.Name)).Select(p => new ApiParam
+                    {
+                        Name = p.Name.Trim(),
+                        Value = p.Value?.Trim() ?? ""
+                    }).ToList() ?? new List<ApiParam>();
+                    if (string.IsNullOrWhiteSpace(t.Id))
+                        t.Id = Guid.NewGuid().ToString("N");
+                }
+
+                var json = JsonSerializer.Serialize(request.Tests, new JsonSerializerOptions { WriteIndented = true });
+                await System.IO.File.WriteAllTextAsync(ApiTestsFile, json);
+                _logger.LogInformation("Saved {Count} API tests", request.Tests.Count);
+                return new JsonResult(new { success = true, message = $"Saved {request.Tests.Count} tests" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Save API tests failed");
+                return new JsonResult(new { success = false, message = ex.Message });
+            }
+        }
+
+        // NEW: Provide tests for Test page (if needed for client side fetch reuse)
+        public IActionResult OnGetApiTests()
+        {
+            try
+            {
+                var list = LoadApiTests();
+                return new JsonResult(list);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to load API tests");
+                return StatusCode(500, new { success = false, message = ex.Message });
+            }
+        }
+
         #endregion
 
-        #region Internal helpers
+        #region Helpers
+
+        private List<ApiTestConfig> LoadApiTests()
+        {
+            try
+            {
+                if (!System.IO.File.Exists(ApiTestsFile))
+                    return new List<ApiTestConfig>();
+                var json = System.IO.File.ReadAllText(ApiTestsFile);
+                return JsonSerializer.Deserialize<List<ApiTestConfig>>(json) ?? new List<ApiTestConfig>();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Load API tests failed");
+                return new List<ApiTestConfig>();
+            }
+        }
 
         private async Task<JsonObject> LoadAppSettingsNodeAsync()
         {
@@ -168,7 +260,6 @@ namespace ApplicationDeployment.Pages
             StagingPath = _config["StagingPath"] ?? string.Empty;
             ShowAppsOnDashboard = _config.GetValue<bool>("Dashboard:ShowApps", false);
 
-            // Servers CSV
             try
             {
                 var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? "servers.csv");
@@ -196,7 +287,6 @@ namespace ApplicationDeployment.Pages
                 ServerList = new();
             }
 
-            // App exe mappings
             try
             {
                 var path = Path.Combine(_env.WebRootPath, "appExes.json");
