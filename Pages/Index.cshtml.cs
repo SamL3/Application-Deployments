@@ -1,6 +1,5 @@
 using ApplicationDeployment.Hubs;
 using ApplicationDeployment.Models;
-using DnsClient.Internal;
 using IWshRuntimeLibrary;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -22,39 +21,38 @@ namespace ApplicationDeployment.Pages
         private readonly IConfiguration _config;
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<IndexModel> _logger;
-        private readonly Dictionary<string, string> _appExes;
         private readonly IHubContext<CopyHub> _hubContext;
 
-        public IndexModel(
-            IConfiguration config,
-            IWebHostEnvironment env,
-            ILogger<IndexModel> logger,
-            IHubContext<CopyHub> hubContext)
+        private readonly Dictionary<string,string> _exeMap;
+        private readonly Dictionary<string,bool> _envInShortcutMap;
+        private readonly List<string> _environments;
+
+        public IndexModel(IConfiguration config,
+                          IWebHostEnvironment env,
+                          ILogger<IndexModel> logger,
+                          IHubContext<CopyHub> hubContext)
         {
-            _config = config ?? throw new ArgumentNullException(nameof(config));
-            _env = env ?? throw new ArgumentNullException(nameof(env));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
-            _appExes = LoadAppExes();
+            _config = config;
+            _env = env;
+            _logger = logger;
+            _hubContext = hubContext;
+            (_exeMap, _envInShortcutMap) = LoadAppExeMetadata();
+            _environments = (_config["Environments"] ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
-        [BindProperty]
-        public List<SelectListItem> Servers { get; set; } = new();
-        [BindProperty]
-        public List<ServerInfo> ServerList { get; set; } = new();
-        [BindProperty]
-        public List<SelectListItem> Apps { get; set; } = new();
-        [BindProperty]
-        public List<SelectListItem> Builds { get; set; } = new();
-        [BindProperty]
-        public string[] SelectedServers { get; set; } = Array.Empty<string>();
-        [BindProperty]
-        public string SelectedApp { get; set; } = string.Empty;
-        [BindProperty]
-        public string SelectedBuild { get; set; } = string.Empty;
-        public string BuildVersion { get; set; } = string.Empty;
+        // ===== New models / properties for environment support =====
 
-        // Grouped structure for center-column cards
+        public class AppBuildEntry
+        {
+            public string App { get; set; } = string.Empty;
+            public string Build { get; set; } = string.Empty;
+            public string? Environment { get; set; } // null if environment-neutral
+            public bool IsEnvironmentSpecific => Environment != null;
+        }
+
         public class AppBuildGroup
         {
             public string AppName { get; set; } = string.Empty;
@@ -62,6 +60,21 @@ namespace ApplicationDeployment.Pages
         }
 
         public List<AppBuildGroup> AppBuildGroups { get; set; } = new();
+
+        // Add this property to the IndexModel class
+        public List<ServerInfo> ServerList { get; set; } = new();
+
+        // Add this property to the IndexModel class
+        public List<SelectListItem> Servers { get; set; } = new();
+
+        // Add this property to the IndexModel class
+        public List<SelectListItem> Apps { get; set; } = new();
+
+        // Add this property to the IndexModel class
+        public string SelectedApp { get; set; } = string.Empty;
+
+        // Add this property to the IndexModel class
+        public List<SelectListItem> Builds { get; set; } = new();
 
         public void OnGet()
         {
@@ -158,44 +171,37 @@ namespace ApplicationDeployment.Pages
 
             if (SelectedServers == null || SelectedServers.Length == 0)
                 return new JsonResult(new { success = false, message = "Please select at least one server." });
-
             if (Selections == null || Selections.Length == 0)
                 return new JsonResult(new { success = false, message = "Please select at least one build." });
 
             var staging = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
 
-            // Parse selections in the form "AppName|BuildName"
             var pairs = ParseSelections(Selections)
                 .Where(p => !string.IsNullOrWhiteSpace(p.App) && !string.IsNullOrWhiteSpace(p.Build))
                 .Where(p => Directory.Exists(Path.Combine(staging, p.App, p.Build)))
                 .ToList();
-
             if (pairs.Count == 0)
-            {
-                _logger.LogWarning("No valid source folders found for provided selections.");
-                return new JsonResult(new { success = false, message = "No valid build sources found for the chosen selections." });
-            }
+                return new JsonResult(new { success = false, message = "No valid build sources found." });
 
-            // Run copy tasks: for each server x each selected app/build pair
             var tasks = new List<Task>();
             foreach (var server in SelectedServers)
             {
                 foreach (var pair in pairs)
                 {
-                    tasks.Add(CopyFilesAsync(server, pair.App, pair.Build, HubConnectionId));
+                    var envFlag = _envInShortcutMap.TryGetValue(pair.App, out var f) && f;
+                    tasks.Add(CopyAndShortcutAsync(server, pair.App, pair.Build, envFlag, HubConnectionId));
                 }
             }
-
             await Task.WhenAll(tasks);
-
             return new JsonResult(new { success = true, totalCopies = tasks.Count });
         }
 
-        private async Task CopyFilesAsync(string selectedServer, string selectedApp, string selectedBuild, string hubConnectionId)
+        private async Task CopyAndShortcutAsync(string server, string app, string version, bool envInShortcut, string hubConnectionId)
         {
             try
             {
-                var sourcePath = Path.Combine(_config["StagingPath"]!, selectedApp, selectedBuild);
+                var stagingRoot = _config["StagingPath"]!;
+                var sourcePath = Path.Combine(stagingRoot, app, version);
                 if (!Directory.Exists(sourcePath))
                 {
                     await _hubContext.Clients.Client(hubConnectionId)
@@ -203,126 +209,176 @@ namespace ApplicationDeployment.Pages
                     return;
                 }
 
-                var destPath = $@"\\{selectedServer}\C$\{_config["CSTApps"]}\{selectedApp}\{selectedBuild}";
-                Directory.CreateDirectory(destPath);
+                var root = _config["CSTApps"] ?? throw new InvalidOperationException("CSTApps not configured");
+                var baseDest = $@"\\{server}\C$\{root}\{app}\{version}";
 
-                var files = Directory.GetFiles(sourcePath, "*.*", SearchOption.AllDirectories);
-                int total = files.Length;
-                int copied = 0;
-
-                foreach (var file in files)
+                if (envInShortcut)
                 {
-                    var rel = Path.GetRelativePath(sourcePath, file);
-                    var destFile = Path.Combine(destPath, rel);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
-                    System.IO.File.Copy(file, destFile, true);
-                    copied++;
-                    int progress = total == 0 ? 100 : (int)(copied * 100.0 / total);
-                    await _hubContext.Clients.Client(hubConnectionId)
-                        .SendAsync("ReceiveProgress", progress);
+                    // Copy once to version folder
+                    await CopyDirectoryAsync(sourcePath, baseDest, hubConnectionId);
+                    await CreateShortcutsAsync(server, app, version, envInShortcut, hubConnectionId);
+                }
+                else
+                {
+                    // Copy per environment into version\Env
+                    foreach (var env in _environments)
+                    {
+                        var envDest = Path.Combine(baseDest, env);
+                        await CopyDirectoryAsync(sourcePath, envDest, hubConnectionId);
+                    }
+                    await CreateShortcutsAsync(server, app, version, envInShortcut, hubConnectionId);
                 }
 
                 await _hubContext.Clients.Client(hubConnectionId)
-                    .SendAsync("ReceiveMessage", $"Copy completed for {selectedServer}.");
-                CreateShortcut(selectedServer, selectedApp, selectedBuild);
-                await _hubContext.Clients.Client(hubConnectionId)
-                    .SendAsync("ReceiveMessage", $"Shortcut created for {selectedServer}.");
+                    .SendAsync("ReceiveMessage", $"Copy + shortcuts completed for {server}:{app}:{version}");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Copy failed for {Server}", selectedServer);
+                _logger.LogError(ex, "Deployment failed for {Server} {App} {Version}", server, app, version);
                 await _hubContext.Clients.Client(hubConnectionId)
-                    .SendAsync("ReceiveMessage", $"Error for {selectedServer}: {ex.Message}");
+                    .SendAsync("ReceiveMessage", $"Error for {server}: {ex.Message}");
             }
         }
 
-        private void CreateShortcut(string selectedServer, string selectedApp, string selectedBuild)
+        private async Task CopyDirectoryAsync(string source, string dest, string hubConnectionId)
         {
-            var stagingAppsRoot = _config["CSTApps"] ?? throw new InvalidOperationException("CSTApps not configured");
-            var exeName = _appExes.TryGetValue(selectedApp, out var exe)
-                ? exe
-                : throw new InvalidOperationException($"No EXE configured for app '{selectedApp}' (check appExes.json).");
-
-            var targetOnRemote = $@"C:\{stagingAppsRoot}\{selectedApp}\{selectedBuild}\{exeName}";
-            var remoteDesktopDir = $@"\\{selectedServer}\C$\CSTApps";
-            
-            var shortcutName = $"{selectedApp} {selectedBuild}.lnk";
-            _logger.LogInformation("shortcutName:{shortcutName}", shortcutName);
-
-            var remoteShortcutPath = Path.Combine(remoteDesktopDir, shortcutName);
-            _logger.LogInformation("remoteShortcutPath:{remoteShortcutPath}", remoteShortcutPath);
-
-            _logger.LogInformation("Creating shortcut. RemoteDesktopDir={RemoteDesktopDir} Target={Target} Exists(Target)={TargetExists}",
-                remoteDesktopDir, targetOnRemote, System.IO.File.Exists(targetOnRemote));
-
-            // Validate remote desktop folder accessible
-            if (!Directory.Exists(remoteDesktopDir))
+            Directory.CreateDirectory(dest);
+            var files = Directory.GetFiles(source, "*.*", SearchOption.AllDirectories);
+            int total = files.Length;
+            int copied = 0;
+            foreach (var file in files)
             {
-                _logger.LogWarning("Remote desktop directory not found or inaccessible: {Dir}", remoteDesktopDir);
-                return;
+                var rel = Path.GetRelativePath(source, file);
+                var targetFile = Path.Combine(dest, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(targetFile)!);
+                System.IO.File.Copy(file, targetFile, true);
+                copied++;
+                int progress = total == 0 ? 100 : (int)(copied * 100.0 / total);
+                await _hubContext.Clients.Client(hubConnectionId)
+                    .SendAsync("ReceiveProgress", progress);
             }
+        }
 
-            // Create shortcut LOCALLY first (temp), then copy – avoids some UNC COM quirks
-            var tempDir = Path.Combine(Path.GetTempPath(), "ShortcutBuild");
-            Directory.CreateDirectory(tempDir);
-            var localShortcutPath = Path.Combine(tempDir, shortcutName);
-
-            try
-            {
-                var shell = new WshShell();
-                var shortcut = (IWshShortcut)shell.CreateShortcut(localShortcutPath);
-                shortcut.TargetPath = targetOnRemote;  // Target path (on the remote machine)
-                shortcut.WorkingDirectory = Path.GetDirectoryName(targetOnRemote) ?? "C:\\";
-                shortcut.IconLocation = targetOnRemote;
-                shortcut.Description = $"{selectedApp} {selectedBuild}";
-                shortcut.Save();
-
-                if (!System.IO.File.Exists(localShortcutPath))
-                {
-                    _logger.LogError("Local shortcut was not created: {LocalPath}", localShortcutPath);
-                    return;
-                }
-
-                // Copy to remote desktop (overwrite)
-                System.IO.File.Copy(localShortcutPath, remoteShortcutPath, true);
-
-                _logger.LogInformation("Shortcut deployed: {RemoteShortcutPath}", remoteShortcutPath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to create shortcut for {Server} App={App} Build={Build}", selectedServer, selectedApp, selectedBuild);
-            }
-            finally
+        private async Task CreateShortcutsAsync(string server, string app, string version, bool envInShortcut, string hubConnectionId)
+        {
+            foreach (var env in _environments)
             {
                 try
                 {
-                    if (System.IO.File.Exists(localShortcutPath))
-                        System.IO.File.Delete(localShortcutPath);
+                    CreateShortcutVariant(server, app, version, env, envInShortcut);
+                    await _hubContext.Clients.Client(hubConnectionId)
+                        .SendAsync("ReceiveMessage", $"Shortcut created: {app} {version} {env}");
                 }
-                catch { /* ignore temp cleanup failures */ }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Shortcut failed {App} {Version} {Env}", app, version, env);
+                }
             }
         }
 
-        private Dictionary<string, string> LoadAppExes()
+        private void CreateShortcutVariant(string server, string app, string version, string environment, bool envInShortcut)
         {
-            var appExesPath = Path.Combine(_env.WebRootPath, "appExes.json");
-            if (System.IO.File.Exists(appExesPath))
+            if (!_exeMap.TryGetValue(app, out var exeName))
+                throw new InvalidOperationException($"No EXE configured for {app}");
+
+            var root = _config["CSTApps"] ?? throw new InvalidOperationException("CSTApps not configured");
+
+            string targetPath;
+            string arguments = "";
+            if (envInShortcut)
             {
-                var json = System.IO.File.ReadAllText(appExesPath);
-                return JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+                // C:\CSTApps\App\Version\Exe + args
+                targetPath = $@"C:\{root}\{app}\{version}\{exeName}";
+                arguments = $"-Configuration {environment} -Mode {environment}";
             }
-            return new Dictionary<string, string>();
+            else
+            {
+                // C:\CSTApps\App\Version\Env\Exe
+                targetPath = $@"C:\{root}\{app}\{version}\{environment}\{exeName}";
+            }
+
+            var shortcutDir = $@"\\{server}\C$\CSTApps";
+            if (!Directory.Exists(shortcutDir))
+            {
+                _logger.LogWarning("Shortcut directory missing: {Dir}", shortcutDir);
+                return;
+            }
+
+            var shortcutName = $"{app} {version} {environment}.lnk";
+            var remoteShortcutPath = Path.Combine(shortcutDir, shortcutName);
+
+            var tempDir = Path.Combine(Path.GetTempPath(), "ShortcutBuild");
+            Directory.CreateDirectory(tempDir);
+            var localShortcutPath = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + ".lnk");
+
+            var shell = new WshShell();
+            var shortcut = (IWshShortcut)shell.CreateShortcut(localShortcutPath);
+            shortcut.TargetPath = targetPath;
+            if (!string.IsNullOrEmpty(arguments))
+                shortcut.Arguments = arguments;
+            shortcut.WorkingDirectory = Path.GetDirectoryName(targetPath) ?? "C:\\";
+            shortcut.IconLocation = targetPath;
+            shortcut.Description = $"{app} {version} {environment}";
+            shortcut.Save();
+
+            if (System.IO.File.Exists(localShortcutPath))
+            {
+                System.IO.File.Copy(localShortcutPath, remoteShortcutPath, true);
+                System.IO.File.Delete(localShortcutPath);
+            }
         }
 
-        private IEnumerable<(string App, string Build)> ParseSelections(IEnumerable<string> selections)
+        private (Dictionary<string,string> exeMap, Dictionary<string,bool> envFlag) LoadAppExeMetadata()
         {
-            foreach (var s in selections)
+            var path = Path.Combine(_env.WebRootPath, "appExes.json");
+            var exeMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var flagMap = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            if (System.IO.File.Exists(path))
             {
-                if (string.IsNullOrWhiteSpace(s)) continue;
-                var parts = s.Split('|', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                try
+                {
+                    var json = System.IO.File.ReadAllText(path);
+                    var list = JsonSerializer.Deserialize<List<AppExeRecord>>(json) ?? new();
+                    foreach (var r in list.Where(r => !string.IsNullOrWhiteSpace(r.Name) && !string.IsNullOrWhiteSpace(r.Exe)))
+                    {
+                        exeMap[r.Name] = r.Exe;
+                        flagMap[r.Name] = r.EnvInShortcut;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to parse appExes.json");
+                }
+            }
+            return (exeMap, flagMap);
+        }
+
+        private class AppExeRecord
+        {
+            public string Name { get; set; } = "";
+            public string Exe { get; set; } = "";
+            public bool EnvInShortcut { get; set; }
+        }
+
+        // Add this method inside the IndexModel class
+
+        private List<AppBuildEntry> ParseSelections(string[] selections)
+        {
+            var result = new List<AppBuildEntry>();
+            foreach (var sel in selections)
+            {
+                // Expected format: "App|Build" or "App|Build|Environment"
+                var parts = sel.Split('|', StringSplitOptions.TrimEntries);
                 if (parts.Length == 2)
-                    yield return (parts[0], parts[1]);
+                {
+                    result.Add(new AppBuildEntry { App = parts[0], Build = parts[1], Environment = null });
+                }
+                else if (parts.Length == 3)
+                {
+                    result.Add(new AppBuildEntry { App = parts[0], Build = parts[1], Environment = parts[2] });
+                }
             }
+            return result;
         }
     }
 }

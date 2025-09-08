@@ -8,9 +8,7 @@
     <h1 class="display-5 text-primary mb-4">Application Deployment</h1>
 
     <div class="row g-4">
-        <!-- LEFT: Servers + Actions (stacked) -->
         <div class="col-lg-3">
-            <!-- Servers Card -->
             <div class="card shadow-sm mb-4">
                 <div class="card-header bg-light fw-semibold">Destination Servers</div>
                 <div class="card-body d-flex flex-column">
@@ -32,8 +30,8 @@
                                 {
                                     <tr class="server-row" data-hostname="@server.HostName">
                                         <td>
-                                            <input type="checkbox" class="form-check-input server-checkbox" 
-                                                   name="SelectedServers" value="@server.HostName" 
+                                            <input type="checkbox" class="form-check-input server-checkbox"
+                                                   name="SelectedServers" value="@server.HostName"
                                                    id="server_@server.HostName">
                                         </td>
                                         <td class="fw-semibold">@server.HostName</td>
@@ -47,21 +45,18 @@
 
                     <div id="serverChips" class="mb-2 d-flex flex-wrap gap-2 small"></div>
 
-                    <label class="form-label small mt-2">Environment Filter</label>
-                    <div id="envFilters" class="btn-group btn-group-sm mb-2" role="group">
-                        @foreach (var env in new[] { "DEV","QA","UAT","REG" })
+                    <label class="form-label small mt-2">Environment</label>
+                    <select id="envSelect" class="form-select form-select-sm">
+                        <option value="">(All)</option>
+                        @foreach (var env in Model.Environments)
                         {
-                            <button type="button" class="btn btn-outline-secondary env-btn" data-env="@env">@env</button>
+                            <option value="@env.Value">@env.Text</option>
                         }
-                    </div>
-
-                    <div class="small text-muted">
-                        Use filters to limit visible builds.
-                    </div>
+                    </select>
+                    <div class="small text-muted mt-1">Filter list by environment (neutral builds always shown).</div>
                 </div>
             </div>
 
-            <!-- Actions Card (moved below Servers) -->
             <div class="card shadow-sm">
                 <div class="card-header bg-light fw-semibold">Actions</div>
                 <div class="card-body d-flex flex-column">
@@ -84,7 +79,6 @@
             </div>
         </div>
 
-        <!-- CENTER: Apps -->
         <div class="col-lg-9">
             <div class="row row-cols-1 row-cols-md-3 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
                 @if (Model.AppBuildGroups == null || Model.AppBuildGroups.Count == 0)
@@ -95,31 +89,37 @@
                 }
                 else
                 {
-                    foreach (var group in Model.AppBuildGroups.OrderBy(g => g.AppName))
+                    foreach (var group in Model.AppBuildGroups)
                     {
-                        <div class="col">
-                            <div class="card h-100 shadow-sm app-card" data-app="@group.AppName">
+                        <div class="col app-card" data-app="@group.AppName">
+                            <div class="card h-100 shadow-sm">
                                 <div class="card-header d-flex justify-content-between align-items-center">
                                     <div class="fw-semibold text-truncate" style="max-width:80%;">@group.AppName</div>
-                                    <span class="badge bg-secondary small app-badge" data-app-badge="@group.AppName">@group.Builds.Count</span>
+                                    <span class="badge bg-secondary small app-badge" data-app-badge="@group.AppName">@group.Variants.Count</span>
                                 </div>
                                 <div class="card-body p-2">
-                                    @if (group.Builds.Count == 0)
+                                    @if (group.Variants.Count == 0)
                                     {
                                         <div class="text-muted small">No builds</div>
                                     }
                                     else
                                     {
                                         <div class="form-check" style="max-height:220px; overflow:auto;">
-                                            @foreach (var build in group.Builds)
+                                            @foreach (var v in group.Variants)
                                             {
-                                                var value = $"{group.AppName}|{build}";
-                                                <div class="form-check">
-                                                    <input class="form-check-input build-checkbox" type="checkbox"
-                                                           id="@($"chk_{HashCode.Combine(group.AppName, build)}")"
-                                                           name="Selections" value="@value" data-app="@group.AppName" data-build="@build" />
-                                                    <label class="form-check-label small text-wrap" for="@($"chk_{HashCode.Combine(group.AppName, build)}")" title="@build">
-                                                        @build
+                                                var chkId = $"chk_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
+                                                <div class="form-check" data-env="@v.Environment">
+                                                    <input class="form-check-input build-checkbox"
+                                                           type="checkbox"
+                                                           id="@chkId"
+                                                           name="Selections"
+                                                           value="@v.SelectionValue(group.AppName)"
+                                                           data-app="@group.AppName"
+                                                           data-build="@v.Build"
+                                                           data-env="@v.Environment" />
+                                                    <label class="form-check-label small text-wrap" for="@chkId"
+                                                           title="@v.Display">
+                                                        @v.Display
                                                     </label>
                                                 </div>
                                             }
@@ -140,7 +140,6 @@
     .app-card { min-height: 220px; }
     .app-card .card-body { padding: 0.5rem; }
     .form-check-label { white-space: normal; }
-    .env-btn.active { background:#0d6efd; color:#fff; border-color:#0d6efd; }
     .build-checkbox:checked + label { font-weight:600; color:#0d6efd; }
     .server-row:hover { background-color: rgba(0,123,255,0.1); }
     .server-row.selected { background-color: rgba(0,123,255,0.2); }
@@ -149,139 +148,94 @@
 
 <script>
 (function(){
-    // Helpers
     const serverCheckboxes = document.querySelectorAll('.server-checkbox');
     const selectAllServers = document.getElementById('selectAllServers');
     const serverChips = document.getElementById('serverChips');
     const selectionSummary = document.getElementById('selectionSummary');
     const clearSelectionBtn = document.getElementById('clearSelection');
     const progressContainer = document.getElementById('progressContainer');
+    const envSelect = document.getElementById('envSelect');
 
-    // Server row selection (full row click)
+    // Server row click
     document.querySelectorAll('.server-row').forEach(row => {
-        row.addEventListener('click', (e) => {
-            if (e.target.type === 'checkbox') return; // Don't interfere with checkbox clicks
-            
-            const checkbox = row.querySelector('.server-checkbox');
-            checkbox.checked = !checkbox.checked;
-            checkbox.dispatchEvent(new Event('change'));
+        row.addEventListener('click', e => {
+            if (e.target.type === 'checkbox') return;
+            const cb = row.querySelector('.server-checkbox');
+            cb.checked = !cb.checked;
+            cb.dispatchEvent(new Event('change'));
         });
     });
 
-    // Server checkbox handling
-    function updateServerRowStyles() {
-        serverCheckboxes.forEach(cb => {
+    function updateServerRowStyles(){
+        serverCheckboxes.forEach(cb=>{
             const row = cb.closest('.server-row');
-            if (cb.checked) {
-                row.classList.add('selected');
-            } else {
-                row.classList.remove('selected');
-            }
+            row.classList.toggle('selected', cb.checked);
         });
     }
-
-    function updateSelectAllState() {
-        const totalCheckboxes = serverCheckboxes.length;
-        const checkedCheckboxes = Array.from(serverCheckboxes).filter(cb => cb.checked).length;
-        
-        if (checkedCheckboxes === 0) {
-            selectAllServers.indeterminate = false;
-            selectAllServers.checked = false;
-        } else if (checkedCheckboxes === totalCheckboxes) {
-            selectAllServers.indeterminate = false;
-            selectAllServers.checked = true;
-        } else {
-            selectAllServers.indeterminate = true;
-            selectAllServers.checked = false;
-        }
+    function updateSelectAllState(){
+        const total = serverCheckboxes.length;
+        const checked = Array.from(serverCheckboxes).filter(c=>c.checked).length;
+        if (checked === 0){ selectAllServers.indeterminate=false; selectAllServers.checked=false; }
+        else if (checked === total){ selectAllServers.indeterminate=false; selectAllServers.checked=true; }
+        else { selectAllServers.indeterminate=true; selectAllServers.checked=false; }
     }
-
-    // Select all functionality
-    selectAllServers.addEventListener('change', () => {
-        const checked = selectAllServers.checked;
-        serverCheckboxes.forEach(cb => {
-            cb.checked = checked;
-        });
-        updateServerRowStyles();
-        refreshServerChips();
-    });
-
-    // Individual checkbox change handlers
-    serverCheckboxes.forEach(cb => {
-        cb.addEventListener('change', () => {
-            updateServerRowStyles();
-            updateSelectAllState();
-            refreshServerChips();
-        });
-    });
-
-    // Server chips
     function refreshServerChips(){
-        serverChips.innerHTML = '';
-        Array.from(serverCheckboxes).filter(cb => cb.checked).forEach(cb => {
-            const span = document.createElement('span');
-            span.className = 'badge rounded-pill bg-primary';
-            span.textContent = cb.value;
+        serverChips.innerHTML='';
+        Array.from(serverCheckboxes).filter(c=>c.checked).forEach(c=>{
+            const span=document.createElement('span');
+            span.className='badge rounded-pill bg-primary';
+            span.textContent=c.value;
             serverChips.appendChild(span);
         });
     }
+    selectAllServers.addEventListener('change', ()=>{
+        serverCheckboxes.forEach(c=>c.checked=selectAllServers.checked);
+        updateServerRowStyles();
+        refreshServerChips();
+        updateSelectAllState();
+    });
+    serverCheckboxes.forEach(c=>c.addEventListener('change', ()=>{
+        updateServerRowStyles();
+        refreshServerChips();
+        updateSelectAllState();
+    }));
+    updateServerRowStyles(); updateSelectAllState(); refreshServerChips();
 
-    // Initialize server states
-    updateServerRowStyles();
-    updateSelectAllState();
-    refreshServerChips();
-
-    // Build selection summary
     function refreshSelectionSummary(){
-        const checks = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked);
-        if(checks.length === 0){
-            selectionSummary.textContent = '(none)';
-            return;
-        }
-        selectionSummary.innerHTML = '';
+        const checks = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked && c.offsetParent !== null);
+        if(!checks.length){ selectionSummary.textContent='(none)'; return; }
+        selectionSummary.innerHTML='';
         checks.forEach(c=>{
-            const app = c.dataset.app;
-            const build = c.dataset.build;
-            const div = document.createElement('div');
-            div.textContent = app + ' :: ' + build;
+            const div=document.createElement('div');
+            const env = c.dataset.env ? ` (${c.dataset.env})` : '';
+            div.textContent = `${c.dataset.app} :: ${c.dataset.build}${env}`;
             selectionSummary.appendChild(div);
         });
     }
-
-    document.querySelectorAll('.build-checkbox').forEach(cb=>{
-        cb.addEventListener('change', ()=> {
-            refreshSelectionSummary();
-        });
-    });
-
+    document.querySelectorAll('.build-checkbox').forEach(cb=>cb.addEventListener('change', refreshSelectionSummary));
     clearSelectionBtn.addEventListener('click', ()=>{
-        document.querySelectorAll('.build-checkbox').forEach(cb=>{
-            cb.checked = false;
-        });
+        document.querySelectorAll('.build-checkbox').forEach(c=>c.checked=false);
         refreshSelectionSummary();
     });
 
-    // Env filter
-    const envButtons = document.querySelectorAll('.env-btn');
-    function activeEnvFilters(){ return Array.from(envButtons).filter(b=>b.classList.contains('active')).map(b=>b.dataset.env); }
-    function envMatches(buildName, envs){
-        if(envs.length===0) return true;
-        return envs.some(env => new RegExp(`(^|[^A-Z0-9])${env}([^A-Z0-9]|$)`, 'i').test(buildName));
-    }
+    // Environment filter
     function applyEnvFilter(){
-        const envs = activeEnvFilters();
-        document.querySelectorAll('.build-checkbox').forEach(cb=>{
-            const build = cb.dataset.build || '';
-            cb.parentElement.style.display = envMatches(build, envs) ? '' : 'none';
-            if(cb.parentElement.style.display === 'none') cb.checked = false;
+        const env = envSelect.value;
+        document.querySelectorAll('.app-card').forEach(card=>{
+            let anyVisible=false;
+            card.querySelectorAll('.build-checkbox').forEach(cb=>{
+                const cbEnv = cb.dataset.env || '';
+                const show = !env || cbEnv === '' || cbEnv === env;
+                const container = cb.closest('.form-check');
+                container.style.display = show ? '' : 'none';
+                if(show) anyVisible=true; else cb.checked=false;
+            });
+            card.style.display = anyVisible ? '' : 'none';
         });
         refreshSelectionSummary();
     }
-    envButtons.forEach(b=> b.addEventListener('click', ()=> { b.classList.toggle('active'); applyEnvFilter(); }));
-    document.getElementById('clearEnvFilters')?.addEventListener('click', ()=> {
-        envButtons.forEach(b=>b.classList.remove('active'));
-        applyEnvFilter();
-    });
+    envSelect.addEventListener('change', applyEnvFilter);
+    applyEnvFilter();
 
     // SignalR
     const connection = new signalR.HubConnectionBuilder().withUrl("/copyHub").build();
@@ -301,40 +255,36 @@
 
     // Deploy
     window.startCopy = function(){
-        const servers = Array.from(serverCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
-        const selections = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked).map(c=>c.value);
-        const hubId = document.getElementById('hubConnectionId').value;
-
-        if(servers.length === 0){ alert('Select at least one server.'); return; }
-        if(selections.length === 0){ alert('Select at least one build.'); return; }
+        const servers = Array.from(serverCheckboxes).filter(c=>c.checked).map(c=>c.value);
+        const selections = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked && c.offsetParent !== null);
+        if(!servers.length){ alert('Select at least one server.'); return; }
+        if(!selections.length){ alert('Select at least one build.'); return; }
 
         progressContainer.classList.remove('d-none');
 
-        // Build form body
         const form = document.getElementById('deploymentForm');
         const fd = new FormData(form);
+        fd.set('HubConnectionId', document.getElementById('hubConnectionId').value);
 
-        // Hub id
-        fd.set('HubConnectionId', hubId);
+        // Clean previous to only send visible checked selections
+        fd.delete('Selections');
+        selections.forEach(s=>fd.append('Selections', s.value));
 
         const token = fd.get('__RequestVerificationToken');
         const body = new URLSearchParams(fd).toString();
 
         fetch('/Deploy?handler=Copy', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
+            method:'POST',
+            headers:{
+                'Content-Type':'application/x-www-form-urlencoded',
                 'RequestVerificationToken': token
             },
             body
-        }).then(r=> {
-            if(!r.ok) return r.text().then(t=>{ console.error('Server error', r.status, t); throw new Error('Server error'); });
-            return r.json();
-        }).then(obj=>{
+        }).then(r=>r.json())
+         .then(obj=>{
             if(!obj.success) alert(obj.message || 'Failed');
-        }).catch(err=>{ console.error('Copy start error:', err); });
+         }).catch(err=>console.error(err));
     };
-
 })();
 </script>
 }

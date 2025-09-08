@@ -29,19 +29,28 @@ namespace ApplicationDeployment.Pages
 
         public string StagingPath { get; set; } = string.Empty;
         public List<ServerInfo> ServerList { get; set; } = new();
-        public Dictionary<string, string> AppExes { get; set; } = new();
+        public List<AppExeConfig> AppExecutables { get; set; } = new();
         public bool ShowAppsOnDashboard { get; set; }
         public List<ApiTestConfig> ApiTests { get; set; } = new();
+        public string EnvironmentsCsv { get; set; } = string.Empty;
+        public string CSTAppsRootPath { get; set; } = string.Empty;
 
         private string ApiTestsFile => Path.Combine(_env.WebRootPath, "apiTests.json");
+        private string AppExesFile => Path.Combine(_env.WebRootPath, "appExes.json");
 
-        public void OnGet()
+        #region Models
+        public class AppExeConfig
         {
-            LoadCurrentSettings();
-            ApiTests = LoadApiTests();
+            public string Name { get; set; } = string.Empty;
+            public string Exe { get; set; } = string.Empty;
+            public bool EnvInShortcut { get; set; }
         }
 
-        #region New API Test Models
+        public class AppExesRequest
+        {
+            public List<AppExeConfig> Apps { get; set; } = new();
+        }
+
         public class ApiTestConfig
         {
             public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -49,21 +58,34 @@ namespace ApplicationDeployment.Pages
             public string ScriptPath { get; set; } = string.Empty;
             public List<ApiParam> Parameters { get; set; } = new();
         }
-
         public class ApiParam
         {
             public string Name { get; set; } = string.Empty;
             public string Value { get; set; } = string.Empty;
         }
-
         public class ApiTestsRequest
         {
             public List<ApiTestConfig> Tests { get; set; } = new();
         }
+        public class ServerListRequest
+        {
+            public List<ServerData> Servers { get; set; } = new();
+        }
+        public class ServerData
+        {
+            public string Hostname { get; set; } = string.Empty;
+            public string Userid { get; set; } = string.Empty;
+            public string Description { get; set; } = string.Empty;
+        }
         #endregion
 
-        #region Handlers (existing + new)
+        public void OnGet()
+        {
+            LoadCurrentSettings();
+            ApiTests = LoadApiTests();
+        }
 
+        #region Handlers
         public IActionResult OnGetTestServer(string hostname)
         {
             if (string.IsNullOrWhiteSpace(hostname))
@@ -88,7 +110,6 @@ namespace ApplicationDeployment.Pages
         {
             if (string.IsNullOrWhiteSpace(stagingPath))
                 return new JsonResult(new { success = false, message = "Staging path cannot be empty" });
-
             try
             {
                 var root = await LoadAppSettingsNodeAsync();
@@ -132,15 +153,37 @@ namespace ApplicationDeployment.Pages
                 return new JsonResult(new { success = false, message = "Invalid apps data" });
             try
             {
-                var path = Path.Combine(_env.WebRootPath, "appExes.json");
+                // basic validation
+                foreach (var a in request.Apps.ToList())
+                {
+                    if (string.IsNullOrWhiteSpace(a.Name) || string.IsNullOrWhiteSpace(a.Exe))
+                        request.Apps.Remove(a);
+                }
                 var json = JsonSerializer.Serialize(request.Apps, new JsonSerializerOptions { WriteIndented = true });
-                await System.IO.File.WriteAllTextAsync(path, json);
+                await System.IO.File.WriteAllTextAsync(AppExesFile, json);
                 _logger.LogInformation("Saved {Count} app exe mappings", request.Apps.Count);
                 return new JsonResult(new { success = true, message = $"Saved {request.Apps.Count} apps" });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Save apps failed");
+                return new JsonResult(new { success = false, message = ex.Message });
+            }
+        }
+
+        public async Task<IActionResult> OnPostSaveEnvironmentsAsync([FromForm] string environmentsCsv)
+        {
+            try
+            {
+                var root = await LoadAppSettingsNodeAsync();
+                root["Environments"] = environmentsCsv ?? "";
+                await PersistAppSettingsAsync(root);
+                _logger.LogInformation("Updated Environments={Env}", environmentsCsv);
+                return new JsonResult(new { success = true, message = "Environments saved" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Save environments failed");
                 return new JsonResult(new { success = false, message = ex.Message });
             }
         }
@@ -164,15 +207,12 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        // NEW: Save API Tests
         public async Task<IActionResult> OnPostSaveApiTestsAsync([FromBody] ApiTestsRequest request)
         {
             try
             {
                 if (request?.Tests == null)
                     return new JsonResult(new { success = false, message = "Invalid test data" });
-
-                // Basic validation + path safety (deny dangerous chars)
                 foreach (var t in request.Tests)
                 {
                     t.ScriptPath = t.ScriptPath?.Trim() ?? "";
@@ -181,15 +221,13 @@ namespace ApplicationDeployment.Pages
                     if (t.ScriptPath.IndexOfAny(new[] { '|', ';', '&' }) >= 0)
                         return new JsonResult(new { success = false, message = $"Illegal character in script path: {t.ScriptPath}" });
                     t.Description = t.Description?.Trim() ?? "";
-                    t.Parameters = t.Parameters?.Where(p => !string.IsNullOrWhiteSpace(p.Name)).Select(p => new ApiParam
-                    {
-                        Name = p.Name.Trim(),
-                        Value = p.Value?.Trim() ?? ""
-                    }).ToList() ?? new List<ApiParam>();
+                    t.Parameters = t.Parameters?
+                        .Where(p => !string.IsNullOrWhiteSpace(p.Name))
+                        .Select(p => new ApiParam { Name = p.Name.Trim(), Value = p.Value?.Trim() ?? "" })
+                        .ToList() ?? new();
                     if (string.IsNullOrWhiteSpace(t.Id))
                         t.Id = Guid.NewGuid().ToString("N");
                 }
-
                 var json = JsonSerializer.Serialize(request.Tests, new JsonSerializerOptions { WriteIndented = true });
                 await System.IO.File.WriteAllTextAsync(ApiTestsFile, json);
                 _logger.LogInformation("Saved {Count} API tests", request.Tests.Count);
@@ -202,7 +240,6 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        // NEW: Provide tests for Test page (if needed for client side fetch reuse)
         public IActionResult OnGetApiTests()
         {
             try
@@ -217,10 +254,29 @@ namespace ApplicationDeployment.Pages
             }
         }
 
+        public async Task<IActionResult> OnPostSaveCstAppsRootPathAsync([FromForm] string cstAppsRootPath)
+        {
+            if (string.IsNullOrWhiteSpace(cstAppsRootPath))
+                return new JsonResult(new { success = false, message = "Path cannot be empty" });
+            try
+            {
+                // Normalize (trim spaces)
+                cstAppsRootPath = cstAppsRootPath.Trim();
+                var root = await LoadAppSettingsNodeAsync();
+                root["CSTAppsRootPath"] = cstAppsRootPath;
+                await PersistAppSettingsAsync(root);
+                _logger.LogInformation("Updated CSTAppsRootPath={Path}", cstAppsRootPath);
+                return new JsonResult(new { success = true, message = "CSTApps root path saved" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Save CSTApps root path failed");
+                return new JsonResult(new { success = false, message = ex.Message });
+            }
+        }
         #endregion
 
         #region Helpers
-
         private List<ApiTestConfig> LoadApiTests()
         {
             try
@@ -242,7 +298,6 @@ namespace ApplicationDeployment.Pages
             var appSettingsPath = Path.Combine(_env.ContentRootPath, "appsettings.json");
             if (!System.IO.File.Exists(appSettingsPath))
                 return new JsonObject();
-
             using var fs = System.IO.File.OpenRead(appSettingsPath);
             var node = await JsonNode.ParseAsync(fs) as JsonObject;
             return node ?? new JsonObject();
@@ -259,6 +314,8 @@ namespace ApplicationDeployment.Pages
         {
             StagingPath = _config["StagingPath"] ?? string.Empty;
             ShowAppsOnDashboard = _config.GetValue<bool>("Dashboard:ShowApps", false);
+            EnvironmentsCsv = _config["Environments"] ?? "";
+            CSTAppsRootPath = _config["CSTAppsRootPath"] ?? @"C:\CST Apps";
 
             try
             {
@@ -289,35 +346,18 @@ namespace ApplicationDeployment.Pages
 
             try
             {
-                var path = Path.Combine(_env.WebRootPath, "appExes.json");
-                if (System.IO.File.Exists(path))
+                if (System.IO.File.Exists(AppExesFile))
                 {
-                    var json = System.IO.File.ReadAllText(path);
-                    AppExes = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
+                    var json = System.IO.File.ReadAllText(AppExesFile);
+                    AppExecutables = JsonSerializer.Deserialize<List<AppExeConfig>>(json) ?? new();
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Load appExes failed");
-                AppExes = new();
+                AppExecutables = new();
             }
         }
-
-        public class ServerListRequest
-        {
-            public List<ServerData> Servers { get; set; } = new();
-        }
-        public class ServerData
-        {
-            public string Hostname { get; set; } = string.Empty;
-            public string Userid { get; set; } = string.Empty;
-            public string Description { get; set; } = string.Empty;
-        }
-        public class AppExesRequest
-        {
-            public Dictionary<string, string> Apps { get; set; } = new();
-        }
-
         #endregion
     }
 }

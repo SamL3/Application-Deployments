@@ -1,7 +1,17 @@
-{
-  "App1": "App1.exe",
-  "App2": "App2.exe",
-  "CST Win APP": "Python\\CirtcaSports.WebApp.exe",
-  "CST Book": "Python\\Launcher\\coreftp.exe",
-  "Some new app": "pathrandom\\some new path.exe"
-}
+[
+  {
+    "Name": "TIM",
+    "Exe": "Python\\CirtcaSports.WebApp.exe",
+    "EnvInShortcut": true
+  },
+  {
+    "Name": "CST Win APP",
+    "Exe": "Python - Copy\\CirtcaSports.WebApp.exe",
+    "EnvInShortcut": false
+  },
+  {
+    "Name": "CST Book",
+    "Exe": "Python - Copy\\CirtcaSports.WebApp.exe",
+    "EnvInShortcut": true
+  }
+]
