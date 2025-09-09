@@ -2,7 +2,7 @@
 @model ApplicationDeployment.Pages.RemoveModel
 @using System.Text.Json
 
-<h1 class="mb-3">Remove — Deployed Applications</h1>
+<h1 class="page-title">Remove — Deployed Applications</h1>
 
 <form id="maintenanceForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
@@ -71,6 +71,7 @@
                 </div>
             </div>
         </div>
+
     </div>
 </form>
 
@@ -99,17 +100,6 @@
 </div>
 
 @section Scripts {
-<style>
-    .server-row:hover { background-color: rgba(0,123,255,0.1); }
-    .server-row.selected { background-color: rgba(0,123,255,0.2); }
-    .build-row:hover { background-color: rgba(0,123,255,0.05); }
-    .build-row.selected { background-color: rgba(0,123,255,0.15); }
-    .sticky-top { position: sticky; top: 0; z-index: 10; }
-    .app-card { margin-bottom: 1rem; }
-    .builds-table { font-size: 0.875rem; }
-    .builds-table td { padding: 0.375rem 0.5rem; }
-</style>
-
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     // Add error handling for Bootstrap

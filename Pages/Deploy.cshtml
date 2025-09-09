@@ -2,18 +2,18 @@
 @model ApplicationDeployment.Pages.DeployModel
 @using System.Text.Json
 
-<form id="deploymentForm" method="post" onsubmit="event.preventDefault(); startCopy();" class="container my-4">
+<form id="deploymentForm" method="post" onsubmit="event.preventDefault(); startCopy();" class="my-3">
     @Html.AntiForgeryToken()
     <input type="hidden" id="hubConnectionId" name="HubConnectionId" />
-    <h1 class="display-5 text-primary mb-4">Application Deployment</h1>
+    <h1 class="page-title">Application Deployment</h1>
 
     <div class="row g-4">
         <div class="col-lg-3">
+            <!-- Servers + Actions (unchanged) -->
             <div class="card shadow-sm mb-4">
-                <div class="card-header bg-light fw-semibold">Destination Servers</div>
-                <div class="card-body d-flex flex-column">
-                    <label class="form-label small">Servers</label>
-                    <div class="table-responsive" style="max-height:300px; overflow:auto;">
+                <div class="card-header">Servers</div>
+                <div class="card-body p-2 d-flex flex-column">
+                    <div class="table-responsive" style="max-height:320px; overflow:auto;">
                         <table class="table table-sm table-hover mb-2">
                             <thead class="table-light sticky-top">
                                 <tr>
@@ -43,7 +43,7 @@
                         </table>
                     </div>
 
-                    <div id="serverChips" class="mb-2 d-flex flex-wrap gap-2 small"></div>
+                    <div id="selectedServersInfo" class="small text-muted mt-2">No servers selected</div>
 
                     <label class="form-label small mt-2">Environment</label>
                     <select id="envSelect" class="form-select form-select-sm">
@@ -58,7 +58,7 @@
             </div>
 
             <div class="card shadow-sm">
-                <div class="card-header bg-light fw-semibold">Actions</div>
+                <div class="card-header">Actions</div>
                 <div class="card-body d-flex flex-column">
                     <div class="mb-3">
                         <button type="submit" class="btn btn-primary w-100 mb-2">Deploy Selected</button>
@@ -79,8 +79,10 @@
             </div>
         </div>
 
+
+        <!-- Apps grid on the right, rendered similar to Remove -->
         <div class="col-lg-9">
-            <div class="row row-cols-1 row-cols-md-3 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
+            <div class="row row-cols-1 row-cols-md-2 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
                 @if (Model.AppBuildGroups == null || Model.AppBuildGroups.Count == 0)
                 {
                     <div class="col">
@@ -93,37 +95,56 @@
                     {
                         <div class="col app-card" data-app="@group.AppName">
                             <div class="card h-100 shadow-sm">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <div class="fw-semibold text-truncate" style="max-width:80%;">@group.AppName</div>
-                                    <span class="badge bg-secondary small app-badge" data-app-badge="@group.AppName">@group.Variants.Count</span>
+                                <div class="card-header small fw-semibold d-flex justify-content-between align-items-center">
+                                    <span>@group.AppName</span>
+                                    <span class="badge bg-secondary app-badge" data-app-badge="@group.AppName">@group.Variants.Count</span>
                                 </div>
-                                <div class="card-body p-2">
+                                <div class="card-body p-0">
                                     @if (group.Variants.Count == 0)
                                     {
-                                        <div class="text-muted small">No builds</div>
+                                        <div class="p-3 text-muted small">No builds</div>
                                     }
                                     else
                                     {
-                                        <div class="form-check" style="max-height:220px; overflow:auto;">
-                                            @foreach (var v in group.Variants)
-                                            {
-                                                var chkId = $"chk_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
-                                                <div class="form-check" data-env="@v.Environment">
-                                                    <input class="form-check-input build-checkbox"
-                                                           type="checkbox"
-                                                           id="@chkId"
-                                                           name="Selections"
-                                                           value="@v.SelectionValue(group.AppName)"
-                                                           data-app="@group.AppName"
-                                                           data-build="@v.Build"
-                                                           data-env="@v.Environment" />
-                                                    <label class="form-check-label small text-wrap" for="@chkId"
-                                                           title="@v.Display">
-                                                        @v.Display
-                                                    </label>
-                                                </div>
-                                            }
-                                        </div>
+                                        <table class="table table-sm table-hover builds-table mb-0">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th scope="col" style="width:50px;">
+                                                        <input type="checkbox"
+                                                               class="form-check-input app-select-all"
+                                                               data-app="@group.AppName"
+                                                               title="Select All Builds for @group.AppName">
+                                                    </th>
+                                                    <th scope="col">Build</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var v in group.Variants)
+                                                {
+                                                    var chkId = $"chk_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
+                                                    <tr class="build-row"
+                                                        data-app="@group.AppName"
+                                                        data-build="@v.Build"
+                                                        data-env="@v.Environment">
+                                                        <td>
+                                                            <input class="form-check-input build-checkbox"
+                                                                   type="checkbox"
+                                                                   id="@chkId"
+                                                                   name="Selections"
+                                                                   value="@v.SelectionValue(group.AppName)"
+                                                                   data-app="@group.AppName"
+                                                                   data-build="@v.Build"
+                                                                   data-env="@v.Environment" />
+                                                        </td>
+                                                        <td class="text-wrap">
+                                                            <label class="form-check-label small text-wrap" for="@chkId" title="@v.Display">
+                                                                @v.Display
+                                                            </label>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
                                     }
                                 </div>
                             </div>
@@ -138,11 +159,12 @@
 @section Scripts {
 <style>
     .app-card { min-height: 220px; }
-    .app-card .card-body { padding: 0.5rem; }
+    .app-card .card-body { padding: 0; }
     .form-check-label { white-space: normal; }
     .build-checkbox:checked + label { font-weight:600; color:#0d6efd; }
     .server-row:hover { background-color: rgba(0,123,255,0.1); }
     .server-row.selected { background-color: rgba(0,123,255,0.2); }
+    .build-row.selected { background-color: rgba(13,110,253,0.08); }
     .sticky-top { position: sticky; top: 0; z-index: 10; }
 </style>
 
@@ -150,11 +172,15 @@
 (function(){
     const serverCheckboxes = document.querySelectorAll('.server-checkbox');
     const selectAllServers = document.getElementById('selectAllServers');
-    const serverChips = document.getElementById('serverChips');
+    const selectedServersInfo = document.getElementById('selectedServersInfo');
     const selectionSummary = document.getElementById('selectionSummary');
     const clearSelectionBtn = document.getElementById('clearSelection');
     const progressContainer = document.getElementById('progressContainer');
     const envSelect = document.getElementById('envSelect');
+    const deployBtn = document.querySelector('button[type="submit"]');
+    const statusBox = document.getElementById('statusMessage');
+
+    let selectedServers = [];
 
     // Server row click
     document.querySelectorAll('.server-row').forEach(row => {
@@ -179,30 +205,50 @@
         else if (checked === total){ selectAllServers.indeterminate=false; selectAllServers.checked=true; }
         else { selectAllServers.indeterminate=true; selectAllServers.checked=false; }
     }
-    function refreshServerChips(){
-        serverChips.innerHTML='';
-        Array.from(serverCheckboxes).filter(c=>c.checked).forEach(c=>{
-            const span=document.createElement('span');
-            span.className='badge rounded-pill bg-primary';
-            span.textContent=c.value;
-            serverChips.appendChild(span);
-        });
+    function updateSelectedServersInfo(){
+        selectedServers = Array.from(serverCheckboxes).filter(c=>c.checked).map(c=>c.value);
+        if (selectedServers.length === 0) selectedServersInfo.textContent = 'No servers selected';
+        else if (selectedServers.length === 1) selectedServersInfo.textContent = `Selected: ${selectedServers[0]}`;
+        else selectedServersInfo.textContent = `Selected: ${selectedServers.length} servers`;
     }
+
     selectAllServers.addEventListener('change', ()=>{
         serverCheckboxes.forEach(c=>c.checked=selectAllServers.checked);
         updateServerRowStyles();
-        refreshServerChips();
         updateSelectAllState();
+        updateSelectedServersInfo();
     });
     serverCheckboxes.forEach(c=>c.addEventListener('change', ()=>{
         updateServerRowStyles();
-        refreshServerChips();
         updateSelectAllState();
+        updateSelectedServersInfo();
     }));
-    updateServerRowStyles(); updateSelectAllState(); refreshServerChips();
+    updateServerRowStyles(); updateSelectAllState(); updateSelectedServersInfo();
 
+    // Build selection helpers (similar to Remove)
+    const appSelectAllCheckboxes = document.querySelectorAll('.app-select-all');
+    const buildCheckboxes = document.querySelectorAll('.build-checkbox');
+
+    function updateBuildRowStyles() {
+        document.querySelectorAll('.build-checkbox').forEach(cb => {
+            const row = cb.closest('.build-row');
+            row?.classList.toggle('selected', cb.checked);
+        });
+    }
+    function updateAppSelectAllStates() {
+        appSelectAllCheckboxes.forEach(appCb => {
+            const app = appCb.getAttribute('data-app');
+            const appBuilds = Array.from(document.querySelectorAll(`.build-checkbox[data-app="${CSS.escape(app)}"]`))
+                .filter(cb => cb.offsetParent !== null); // visible only
+            const checked = appBuilds.filter(cb => cb.checked).length;
+            if (checked === 0) { appCb.indeterminate = false; appCb.checked = false; }
+            else if (checked === appBuilds.length) { appCb.indeterminate = false; appCb.checked = true; }
+            else { appCb.indeterminate = true; appCb.checked = false; }
+        });
+    }
     function refreshSelectionSummary(){
-        const checks = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked && c.offsetParent !== null);
+        const checks = Array.from(document.querySelectorAll('.build-checkbox'))
+            .filter(c=>c.checked && c.offsetParent !== null);
         if(!checks.length){ selectionSummary.textContent='(none)'; return; }
         selectionSummary.innerHTML='';
         checks.forEach(c=>{
@@ -212,9 +258,42 @@
             selectionSummary.appendChild(div);
         });
     }
-    document.querySelectorAll('.build-checkbox').forEach(cb=>cb.addEventListener('change', refreshSelectionSummary));
+
+    // Row click toggles
+    document.querySelectorAll('.build-row').forEach(row=>{
+        row.addEventListener('click', e=>{
+            if (e.target.type === 'checkbox' || e.target.tagName === 'LABEL') return;
+            const cb = row.querySelector('.build-checkbox');
+            cb.checked = !cb.checked;
+            cb.dispatchEvent(new Event('change'));
+        });
+    });
+
+    // Build checkbox change handlers
+    document.querySelectorAll('.build-checkbox').forEach(cb=>{
+        cb.addEventListener('change', ()=>{
+            updateBuildRowStyles();
+            updateAppSelectAllStates();
+            refreshSelectionSummary();
+        });
+    });
+
+    // App-level select all
+    appSelectAllCheckboxes.forEach(appCb=>{
+        appCb.addEventListener('change', ()=>{
+            const app = appCb.getAttribute('data-app');
+            const visibleAppBuilds = Array.from(document.querySelectorAll(`.build-checkbox[data-app="${CSS.escape(app)}"]`))
+                .filter(cb => cb.offsetParent !== null);
+            visibleAppBuilds.forEach(cb => cb.checked = appCb.checked);
+            // trigger one change to refresh UI
+            if (visibleAppBuilds.length) visibleAppBuilds[0].dispatchEvent(new Event('change'));
+        });
+    });
+
     clearSelectionBtn.addEventListener('click', ()=>{
         document.querySelectorAll('.build-checkbox').forEach(c=>c.checked=false);
+        updateBuildRowStyles();
+        updateAppSelectAllStates();
         refreshSelectionSummary();
     });
 
@@ -222,19 +301,28 @@
     function applyEnvFilter(){
         const env = envSelect.value;
         document.querySelectorAll('.app-card').forEach(card=>{
-            let anyVisible=false;
-            card.querySelectorAll('.build-checkbox').forEach(cb=>{
+            const app = card.getAttribute('data-app');
+            const rows = card.querySelectorAll('.build-row');
+            let visibleCount = 0;
+            rows.forEach(row=>{
+                const cb = row.querySelector('.build-checkbox');
                 const cbEnv = cb.dataset.env || '';
                 const show = !env || cbEnv === '' || cbEnv === env;
-                const container = cb.closest('.form-check');
-                container.style.display = show ? '' : 'none';
-                if(show) anyVisible=true; else cb.checked=false;
+                row.style.display = show ? '' : 'none';
+                if (show) visibleCount++;
+                else if (!show) cb.checked = cb.checked && cb.checked; // no-op to keep state; summary uses visible only
             });
-            card.style.display = anyVisible ? '' : 'none';
+            const badge = card.querySelector(`[data-app-badge="${CSS.escape(app)}"]`);
+            if (badge) badge.textContent = visibleCount;
+            card.style.display = visibleCount > 0 ? '' : 'none';
         });
+        updateAppSelectAllStates();
         refreshSelectionSummary();
     }
     envSelect.addEventListener('change', applyEnvFilter);
+    updateBuildRowStyles();
+    updateAppSelectAllStates();
+    refreshSelectionSummary();
     applyEnvFilter();
 
     // SignalR
@@ -245,28 +333,38 @@
         bar.textContent = p + "%";
     });
     connection.on("ReceiveMessage", m => {
-        const box = document.getElementById("statusMessage");
-        box.textContent += m + "\n";
-        box.scrollTop = box.scrollHeight;
+        statusBox.textContent += m + "\n";
+        statusBox.scrollTop = statusBox.scrollHeight;
+    });
+    // New: dedicated error channel
+    connection.on("ReceiveError", m => {
+        statusBox.textContent += "[ERROR] " + m + "\n";
+        statusBox.scrollTop = statusBox.scrollHeight;
     });
     connection.start().then(()=> {
         document.getElementById('hubConnectionId').value = connection.connectionId;
-    }).catch(err=>console.error("SignalR connection error:", err));
+    }).catch(err=>{
+        console.error("SignalR connection error:", err);
+        alert('Real-time connection failed. Progress updates may be unavailable.');
+    });
 
     // Deploy
     window.startCopy = function(){
         const servers = Array.from(serverCheckboxes).filter(c=>c.checked).map(c=>c.value);
-        const selections = Array.from(document.querySelectorAll('.build-checkbox')).filter(c=>c.checked && c.offsetParent !== null);
+        const selections = Array.from(document.querySelectorAll('.build-checkbox'))
+            .filter(c=>c.checked && c.offsetParent !== null);
         if(!servers.length){ alert('Select at least one server.'); return; }
         if(!selections.length){ alert('Select at least one build.'); return; }
 
         progressContainer.classList.remove('d-none');
+        statusBox.textContent = ''; // Clear previous logs
+        deployBtn.disabled = true;
 
         const form = document.getElementById('deploymentForm');
         const fd = new FormData(form);
         fd.set('HubConnectionId', document.getElementById('hubConnectionId').value);
 
-        // Clean previous to only send visible checked selections
+        // Only send visible checked selections
         fd.delete('Selections');
         selections.forEach(s=>fd.append('Selections', s.value));
 
@@ -280,11 +378,24 @@
                 'RequestVerificationToken': token
             },
             body
-        }).then(r=>r.json())
-         .then(obj=>{
-            if(!obj.success) alert(obj.message || 'Failed');
-         }).catch(err=>console.error(err));
+        }).then(async r=>{
+            let payload;
+            try { payload = await r.json(); } catch { payload = null; }
+            if (!r.ok || !payload || !payload.success) {
+                const message = (payload && payload.message) ? payload.message : `HTTP ${r.status}`;
+                statusBox.textContent += `[ERROR] Request failed: ${message}\n`;
+                alert(payload?.message || 'Deployment request failed.');
+            }
+        }).catch(err=>{
+            statusBox.textContent += `[ERROR] Network error: ${err.message}\n`;
+            console.error(err);
+            alert('Network error starting deployment.');
+        }).finally(()=>{
+            deployBtn.disabled = false;
+        });
     };
+
+    // ... existing UI wiring for builds and env filter remains unchanged ...
 })();
 </script>
 }

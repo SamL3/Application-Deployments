@@ -37,6 +37,13 @@ namespace ApplicationDeployment.Pages
             _appExes = LoadAppExes();
         }
 
+        private sealed class AppExeEntry
+        {
+            public string Name { get; set; } = string.Empty;
+            public string Exe { get; set; } = string.Empty;
+            public bool EnvInShortcut { get; set; }
+        }
+
         public class AppBuildVariant
         {
             public string Build { get; set; } = string.Empty;
@@ -107,7 +114,19 @@ namespace ApplicationDeployment.Pages
                 }
             }
 
-            await Task.WhenAll(tasks);
+            try
+            {
+                await Task.WhenAll(tasks);
+            }
+            catch (Exception ex)
+            {
+                // Any unexpected bubble-ups get logged and an error event sent
+                _logger.LogError(ex, "Unexpected failure during deployment batch.");
+                await _hubContext.Clients.Client(HubConnectionId)
+                    .SendAsync("ReceiveError", $"Deployment batch failed: {ex.Message}");
+                return new JsonResult(new { success = false, message = "One or more deployments failed unexpectedly." });
+            }
+
             return new JsonResult(new { success = true, totalCopies = tasks.Count });
         }
 
@@ -198,39 +217,89 @@ namespace ApplicationDeployment.Pages
 
                 if (!Directory.Exists(sourcePath))
                 {
-                    await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveMessage", $"Source not found: {sourcePath}");
+                    await _hubContext.Clients.Client(hubConnectionId)
+                        .SendAsync("ReceiveError", $"Source not found: {sourcePath}");
                     return;
                 }
 
+                var cstAppsRoot = _config["CSTApps"] ?? "CSTApps";
                 var destPath = environment == null
-                    ? $@"\\{selectedServer}\C$\{_config["CSTApps"]}\{selectedApp}\{selectedBuild}"
-                    : $@"\\{selectedServer}\C$\{_config["CSTApps"]}\{selectedApp}\{selectedBuild}\{environment}";
+                    ? $@"\\{selectedServer}\C$\{cstAppsRoot}\{selectedApp}\{selectedBuild}"
+                    : $@"\\{selectedServer}\C$\{cstAppsRoot}\{selectedApp}\{selectedBuild}\{environment}";
 
-                Directory.CreateDirectory(destPath);
+                try
+                {
+                    Directory.CreateDirectory(destPath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to create destination folder {Dest}", destPath);
+                    await _hubContext.Clients.Client(hubConnectionId)
+                        .SendAsync("ReceiveError", $"Cannot create destination: {destPath} ({ex.Message})");
+                    return;
+                }
 
                 var files = Directory.GetFiles(sourcePath, "*.*", SearchOption.AllDirectories);
                 int total = files.Length;
                 int copied = 0;
+                int failed = 0;
 
                 foreach (var file in files)
                 {
                     var rel = Path.GetRelativePath(sourcePath, file);
                     var destFile = Path.Combine(destPath, rel);
-                    Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
-                    System.IO.File.Copy(file, destFile, true);
-                    copied++;
-                    int progress = total == 0 ? 100 : (int)(copied * 100.0 / total);
+
+                    try
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        _logger.LogWarning(ex, "Failed creating directory for {DestFile}", destFile);
+                        await _hubContext.Clients.Client(hubConnectionId)
+                            .SendAsync("ReceiveError", $"Failed to create folder for: {destFile} ({ex.Message})");
+                        // Continue to next file
+                        int progress1 = total == 0 ? 100 : (int)((copied + failed) * 100.0 / total);
+                        await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveProgress", progress1);
+                        continue;
+                    }
+
+                    try
+                    {
+                        System.IO.File.Copy(file, destFile, true);
+                        copied++;
+                    }
+                    catch (Exception ex)
+                    {
+                        failed++;
+                        _logger.LogWarning(ex, "Failed copying {Source} to {Dest}", file, destFile);
+                        await _hubContext.Clients.Client(hubConnectionId)
+                            .SendAsync("ReceiveError", $"Copy failed: {rel} ({ex.Message})");
+                    }
+
+                    int progress = total == 0 ? 100 : (int)((copied + failed) * 100.0 / total);
                     await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveProgress", progress);
                 }
 
-                await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveMessage", $"Copy completed for {selectedServer}.");
-                CreateShortcut(selectedServer, selectedApp, selectedBuild, environment);
-                await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveMessage", "Shortcut created.");
+                await _hubContext.Clients.Client(hubConnectionId)
+                    .SendAsync("ReceiveMessage", $"Copy summary for {selectedServer} — ok: {copied}, failed: {failed}");
+
+                if (failed == 0)
+                {
+                    CreateShortcut(selectedServer, selectedApp, selectedBuild, environment);
+                    await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveMessage", "Shortcut created.");
+                }
+                else
+                {
+                    await _hubContext.Clients.Client(hubConnectionId)
+                        .SendAsync("ReceiveError", "Skipped shortcut creation due to copy errors.");
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Copy failed for {Server}", selectedServer);
-                await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveMessage", $"Error: {ex.Message}");
+                await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveError", $"Unexpected error: {ex.Message}");
             }
         }
 
@@ -322,19 +391,39 @@ namespace ApplicationDeployment.Pages
         private Dictionary<string, string> LoadAppExes()
         {
             var appExesPath = Path.Combine(_env.WebRootPath, "appExes.json");
-            if (System.IO.File.Exists(appExesPath))
+            if (!System.IO.File.Exists(appExesPath))
+                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            try
             {
                 var jsonString = System.IO.File.ReadAllText(appExesPath);
-                try
+
+                // 1) Try the dictionary format: { "AppA": "AppA.exe", ... }
+                var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(jsonString);
+                if (dict != null && dict.Count > 0)
+                    return new Dictionary<string, string>(dict, StringComparer.OrdinalIgnoreCase);
+
+                // 2) Try the list format saved by Config: [ { "name": "...", "exe": "...", "envInShortcut": true }, ... ]
+                var list = JsonSerializer.Deserialize<List<AppExeEntry>>(jsonString);
+                if (list != null && list.Count > 0)
                 {
-                    var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(jsonString);
+                    return list
+                        .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Exe))
+                        .ToDictionary(e => e.Name, e => e.Exe, StringComparer.OrdinalIgnoreCase);
                 }
-                catch (JsonException ex)
-                {
-                    // Log or handle the error
-                }
+
+                _logger.LogWarning("appExes.json parsed but contained no mappings.");
             }
-            return new Dictionary<string, string>();
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse appExes.json; no applications will be listed.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error reading appExes.json.");
+            }
+
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
 
         private IEnumerable<(string App, string Build, string? Environment)> ParseSelections(IEnumerable<string> selections)
@@ -343,8 +432,17 @@ namespace ApplicationDeployment.Pages
             {
                 if (string.IsNullOrWhiteSpace(s)) continue;
                 var parts = s.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                if (parts.Length == 2) yield return (parts[0], parts[1], null);
-                else if (parts.Length == 3) yield return (parts[0], parts[1], parts[2]);
+                if (parts.Length == 0) continue;
+
+                // App|Build or App|Build|Env
+                if (parts.Length == 2)
+                {
+                    yield return (parts[0], parts[1], null);
+                }
+                else if (parts.Length == 3)
+                {
+                    yield return (parts[0], parts[1], parts[2]);
+                }
             }
         }
     }

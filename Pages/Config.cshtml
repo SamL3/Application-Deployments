@@ -1,17 +1,16 @@
 @page "/Config"
 @model ApplicationDeployment.Pages.ConfigModel
 
-<h1 class="mb-3">Config - Configuration Settings</h1>
+<h1 class="page-title">Configuration Settings</h1>
 
 <form id="configForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
 
     <div class="row g-4">
+        <!-- Row 1 -->
         <div class="col-lg-4">
             <div class="card shadow-sm h-100">
-                <div class="card-header bg-dark text-white">
-                    <h5 class="mb-0">Dashboard Options</h5>
-                </div>
+                <div class="card-header"><h5 class="mb-0">Dashboard Options</h5></div>
                 <div class="card-body">
                     <div class="form-check form-switch mb-3">
                         <input class="form-check-input" type="checkbox" id="showAppsToggle" @(Model.ShowAppsOnDashboard ? "checked" : "") />
@@ -26,7 +25,7 @@
 
         <div class="col-lg-4">
             <div class="card shadow-sm h-100">
-                <div class="card-header bg-primary text-white"><h5 class="mb-0">Staging Path</h5></div>
+                <div class="card-header"><h5 class="mb-0">Staging Path</h5></div>
                 <div class="card-body">
                     <label for="stagingPath" class="form-label">UNC Location <span class="text-danger">*</span></label>
                     <div class="input-group mb-2">
@@ -40,7 +39,23 @@
 
         <div class="col-lg-4">
             <div class="card shadow-sm h-100">
-                <div class="card-header bg-info text-white d-flex justify-content-between">
+                <div class="card-header"><h5 class="mb-0">CSTApps Root Path</h5></div>
+                <div class="card-body">
+                    <label for="cstAppsRootPath" class="form-label">Local Root (on target servers) <span class="text-danger">*</span></label>
+                    <div class="input-group mb-2">
+                        <input type="text" class="form-control" id="cstAppsRootPath" value="@Model.CSTAppsRootPath" />
+                        <button type="button" class="btn btn-success" id="saveCstAppsRootPath">Save</button>
+                    </div>
+                    <div class="form-text">Example: C:\CST Apps (NOT a UNC).</div>
+                    <div id="cstAppsRootStatus" class="small text-muted mt-1"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 2 -->
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header d-flex justify-content-between">
                     <span>Servers</span>
                     <span>
                         <button type="button" class="btn btn-light btn-sm" id="addServerBtn">Add</button>
@@ -71,7 +86,21 @@
 
         <div class="col-lg-6">
             <div class="card shadow-sm h-100">
-                <div class="card-header bg-warning d-flex justify-content-between">
+                <div class="card-header"><span>Environments</span></div>
+                <div class="card-body">
+                    <label class="form-label">Comma Separated (order used for deployment)</label>
+                    <input id="environmentsCsv" class="form-control form-control-sm mb-2" value="@Model.EnvironmentsCsv" />
+                    <button type="button" id="saveEnvironmentsBtn" class="btn btn-sm btn-success">Save Environments</button>
+                    <div id="envStatus" class="small text-muted mt-2"></div>
+                    <div class="small text-muted mt-2">Example: Dev,QA,UAT,STG,Prd</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Row 3 -->
+        <div class="col-12">
+            <div class="card shadow-sm h-100">
+                <div class="card-header d-flex justify-content-between">
                     <span>Application Executables</span>
                     <span>
                         <button type="button" class="btn btn-dark btn-sm" id="addAppBtn">Add</button>
@@ -112,26 +141,10 @@
             </div>
         </div>
 
-        <div class="col-lg-6">
+        <!-- Row 4 -->
+        <div class="col-12">
             <div class="card shadow-sm h-100">
-                <div class="card-header bg-secondary text-white d-flex justify-content-between">
-                    <span>Environments</span>
-                </div>
-                <div class="card-body">
-                    <label class="form-label">Comma Separated (order used for deployment)</label>
-                    <input id="environmentsCsv" class="form-control form-control-sm mb-2" value="@Model.EnvironmentsCsv" />
-                    <button type="button" id="saveEnvironmentsBtn" class="btn btn-sm btn-success">Save Environments</button>
-                    <div id="envStatus" class="small text-muted mt-2"></div>
-                    <div class="small text-muted mt-2">
-                        Example: Dev,QA,UAT,STG,Prd
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-lg-6">
-            <div class="card shadow-sm h-100">
-                <div class="card-header bg-secondary text-white d-flex justify-content-between">
+                <div class="card-header d-flex justify-content-between">
                     <span>API Tests (PowerShell)</span>
                     <span>
                         <button type="button" class="btn btn-light btn-sm" id="addApiTestBtn">Add Test</button>
@@ -183,37 +196,6 @@
                     </div>
                     <div class="small text-muted">Executed on Test page as: scriptPath + each parameter as "-p Name Value".</div>
                     <div id="apiTestsStatus" class="small mt-2 text-muted"></div>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-lg-4">
-            <div class="card shadow-sm h-100">
-                <div class="card-header bg-secondary text-white"><h5 class="mb-0">CSTApps Root Path</h5></div>
-                <div class="card-body">
-                    <label for="cstAppsRootPath" class="form-label">Local Root (on target servers) <span class="text-danger">*</span></label>
-                    <div class="input-group mb-2">
-                        <input type="text" class="form-control" id="cstAppsRootPath" value="@Model.CSTAppsRootPath" />
-                        <button type="button" class="btn btn-success" id="saveCstAppsRootPath">Save</button>
-                    </div>
-                    <div class="form-text">Example: C:\CST Apps (NOT a UNC).</div>
-                    <div id="cstAppsRootStatus" class="small text-muted mt-1"></div>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-12">
-            <div class="card shadow-sm">
-                <div class="card-header bg-light">Status & Export</div>
-                <div class="card-body">
-                    <div id="statusArea" class="alert alert-info d-none py-2 mb-3">
-                        <span id="statusMessage">Ready</span>
-                    </div>
-                    <div class="d-flex gap-2 flex-wrap">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="exportConfiguration()">Export Config</button>
-                        <input type="file" id="importConfig" accept=".json" class="d-none" onchange="importConfiguration(arguments[0])" />
-                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="document.getElementById('importConfig').click()">Import Config</button>
-                    </div>
                 </div>
             </div>
         </div>
@@ -325,8 +307,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!hostname) return;
             servers.push({
                 hostname,
-                userid: tr.querySelector('[data-field="userid"]').value.trim(),
-                description: tr.querySelector('[data-field="description"]').value.trim()
+                userid: tr.querySelector('[data-field="userid"]').value_trim(),
+                description: tr.querySelector('[data-field="description"]').value_trim()
             });
         });
         const apps = [];

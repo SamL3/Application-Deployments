@@ -26,6 +26,26 @@ body {
   background-color:#214b8c;
 }
 
+/* Card consistency */
+.card { border-radius: .5rem; }
+.card-header,
+.card-footer {
+  background-color: #f8f9fa;
+  color: #374151;
+  font-weight: 600;
+  font-size: .95rem;
+  padding: .5rem .75rem;
+}
+.card-body { padding: .75rem; }
+
+/* Page title */
+.page-title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: #0d6efd;
+  margin-bottom: 1rem;
+}
+
 /* ANSI color support */
 .ansi-output { background:#101215; color:#d0d0d0; padding:.5rem; overflow:auto; border:1px solid #ced4da; }
 .ansi-output .ansi-bold { font-weight:600; }
