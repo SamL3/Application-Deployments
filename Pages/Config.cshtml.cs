@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -78,238 +79,34 @@ namespace ApplicationDeployment.Pages
             public string Description { get; set; } = string.Empty;
         }
         #endregion
-
+    
         public void OnGet()
         {
             LoadCurrentSettings();
             ApiTests = LoadApiTests();
         }
 
-        #region Handlers
-        public IActionResult OnGetTestServer(string hostname)
-        {
-            if (string.IsNullOrWhiteSpace(hostname))
-                return new JsonResult(new { success = false, message = "Hostname required" });
-            try
-            {
-                var accessible = Directory.Exists($@"\\{hostname}\C$");
-                return new JsonResult(new
-                {
-                    success = accessible,
-                    message = accessible ? "Server accessible" : "Server not accessible or no permissions"
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Test server failed: {Host}", hostname);
-                return new JsonResult(new { success = false, message = $"Connection error: {ex.Message}" });
-            }
-        }
-
-        public async Task<IActionResult> OnPostSaveStagingPathAsync([FromForm] string stagingPath)
-        {
-            if (string.IsNullOrWhiteSpace(stagingPath))
-                return new JsonResult(new { success = false, message = "Staging path cannot be empty" });
-            try
-            {
-                var root = await LoadAppSettingsNodeAsync();
-                root["StagingPath"] = stagingPath;
-                await PersistAppSettingsAsync(root);
-                _logger.LogInformation("Updated StagingPath={Path}", stagingPath);
-                return new JsonResult(new { success = true, message = "Staging path saved" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Save staging path failed");
-                return new JsonResult(new { success = false, message = ex.Message });
-            }
-        }
-
-        public async Task<IActionResult> OnPostSaveServersAsync([FromBody] ServerListRequest request)
-        {
-            if (request?.Servers == null)
-                return new JsonResult(new { success = false, message = "Invalid server data" });
-            try
-            {
-                var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? "servers.csv");
-                var lines = request.Servers
-                    .Where(s => !string.IsNullOrWhiteSpace(s.Hostname))
-                    .Select(s => $"{s.Hostname},{s.Userid},{s.Description}")
-                    .ToList();
-                await System.IO.File.WriteAllLinesAsync(csvPath, lines);
-                _logger.LogInformation("Saved {Count} servers", lines.Count);
-                return new JsonResult(new { success = true, message = $"Saved {lines.Count} servers" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Save servers failed");
-                return new JsonResult(new { success = false, message = ex.Message });
-            }
-        }
-
-        public async Task<IActionResult> OnPostSaveAppsAsync([FromBody] AppExesRequest request)
-        {
-            if (request?.Apps == null)
-                return new JsonResult(new { success = false, message = "Invalid apps data" });
-            try
-            {
-                // basic validation
-                foreach (var a in request.Apps.ToList())
-                {
-                    if (string.IsNullOrWhiteSpace(a.Name) || string.IsNullOrWhiteSpace(a.Exe))
-                        request.Apps.Remove(a);
-                }
-                var json = JsonSerializer.Serialize(request.Apps, new JsonSerializerOptions { WriteIndented = true });
-                await System.IO.File.WriteAllTextAsync(AppExesFile, json);
-                _logger.LogInformation("Saved {Count} app exe mappings", request.Apps.Count);
-                return new JsonResult(new { success = true, message = $"Saved {request.Apps.Count} apps" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Save apps failed");
-                return new JsonResult(new { success = false, message = ex.Message });
-            }
-        }
-
-        public async Task<IActionResult> OnPostSaveEnvironmentsAsync([FromForm] string environmentsCsv)
-        {
-            try
-            {
-                var root = await LoadAppSettingsNodeAsync();
-                root["Environments"] = environmentsCsv ?? "";
-                await PersistAppSettingsAsync(root);
-                _logger.LogInformation("Updated Environments={Env}", environmentsCsv);
-                return new JsonResult(new { success = true, message = "Environments saved" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Save environments failed");
-                return new JsonResult(new { success = false, message = ex.Message });
-            }
-        }
-
-        public async Task<IActionResult> OnPostSaveDashboardOptionsAsync([FromForm] bool showApps)
-        {
-            try
-            {
-                var root = await LoadAppSettingsNodeAsync();
-                var dashboardNode = root["Dashboard"] as JsonObject ?? new JsonObject();
-                dashboardNode["ShowApps"] = showApps;
-                root["Dashboard"] = dashboardNode;
-                await PersistAppSettingsAsync(root);
-                _logger.LogInformation("Dashboard:ShowApps set to {Val}", showApps);
-                return new JsonResult(new { success = true, message = "Dashboard options saved", value = showApps });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Save dashboard options failed");
-                return new JsonResult(new { success = false, message = ex.Message });
-            }
-        }
-
-        public async Task<IActionResult> OnPostSaveApiTestsAsync([FromBody] ApiTestsRequest request)
-        {
-            try
-            {
-                if (request?.Tests == null)
-                    return new JsonResult(new { success = false, message = "Invalid test data" });
-                foreach (var t in request.Tests)
-                {
-                    t.ScriptPath = t.ScriptPath?.Trim() ?? "";
-                    if (string.IsNullOrWhiteSpace(t.ScriptPath))
-                        return new JsonResult(new { success = false, message = "Script path required for all tests" });
-                    if (t.ScriptPath.IndexOfAny(new[] { '|', ';', '&' }) >= 0)
-                        return new JsonResult(new { success = false, message = $"Illegal character in script path: {t.ScriptPath}" });
-                    t.Description = t.Description?.Trim() ?? "";
-                    t.Parameters = t.Parameters?
-                        .Where(p => !string.IsNullOrWhiteSpace(p.Name))
-                        .Select(p => new ApiParam { Name = p.Name.Trim(), Value = p.Value?.Trim() ?? "" })
-                        .ToList() ?? new();
-                    if (string.IsNullOrWhiteSpace(t.Id))
-                        t.Id = Guid.NewGuid().ToString("N");
-                }
-                var json = JsonSerializer.Serialize(request.Tests, new JsonSerializerOptions { WriteIndented = true });
-                await System.IO.File.WriteAllTextAsync(ApiTestsFile, json);
-                _logger.LogInformation("Saved {Count} API tests", request.Tests.Count);
-                return new JsonResult(new { success = true, message = $"Saved {request.Tests.Count} tests" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Save API tests failed");
-                return new JsonResult(new { success = false, message = ex.Message });
-            }
-        }
-
-        public IActionResult OnGetApiTests()
-        {
-            try
-            {
-                var list = LoadApiTests();
-                return new JsonResult(list);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to load API tests");
-                return StatusCode(500, new { success = false, message = ex.Message });
-            }
-        }
-
-        public async Task<IActionResult> OnPostSaveCstAppsRootPathAsync([FromForm] string cstAppsRootPath)
-        {
-            if (string.IsNullOrWhiteSpace(cstAppsRootPath))
-                return new JsonResult(new { success = false, message = "Path cannot be empty" });
-            try
-            {
-                // Normalize (trim spaces)
-                cstAppsRootPath = cstAppsRootPath.Trim();
-                var root = await LoadAppSettingsNodeAsync();
-                root["CSTAppsRootPath"] = cstAppsRootPath;
-                await PersistAppSettingsAsync(root);
-                _logger.LogInformation("Updated CSTAppsRootPath={Path}", cstAppsRootPath);
-                return new JsonResult(new { success = true, message = "CSTApps root path saved" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Save CSTApps root path failed");
-                return new JsonResult(new { success = false, message = ex.Message });
-            }
-        }
-        #endregion
-
-        #region Helpers
+        // Add this method to fix CS0103
         private List<ApiTestConfig> LoadApiTests()
         {
             try
             {
-                if (!System.IO.File.Exists(ApiTestsFile))
-                    return new List<ApiTestConfig>();
-                var json = System.IO.File.ReadAllText(ApiTestsFile);
-                return JsonSerializer.Deserialize<List<ApiTestConfig>>(json) ?? new List<ApiTestConfig>();
+                if (System.IO.File.Exists(ApiTestsFile))
+                {
+                    var json = System.IO.File.ReadAllText(ApiTestsFile);
+                    var tests = JsonSerializer.Deserialize<List<ApiTestConfig>>(json);
+                    return tests ?? new List<ApiTestConfig>();
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Load API tests failed");
-                return new List<ApiTestConfig>();
+                _logger.LogError(ex, "LoadApiTests failed");
+                Debug.WriteLine($"[Config] LoadApiTests failed: {ex.Message}");
             }
+            return new List<ApiTestConfig>();
         }
 
-        private async Task<JsonObject> LoadAppSettingsNodeAsync()
-        {
-            var appSettingsPath = Path.Combine(_env.ContentRootPath, "appsettings.json");
-            if (!System.IO.File.Exists(appSettingsPath))
-                return new JsonObject();
-            using var fs = System.IO.File.OpenRead(appSettingsPath);
-            var node = await JsonNode.ParseAsync(fs) as JsonObject;
-            return node ?? new JsonObject();
-        }
-
-        private async Task PersistAppSettingsAsync(JsonObject root)
-        {
-            var appSettingsPath = Path.Combine(_env.ContentRootPath, "appsettings.json");
-            var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
-            await System.IO.File.WriteAllTextAsync(appSettingsPath, json);
-        }
-
+        #region Helpers
         private void LoadCurrentSettings()
         {
             StagingPath = _config["StagingPath"] ?? string.Empty;
@@ -317,12 +114,19 @@ namespace ApplicationDeployment.Pages
             EnvironmentsCsv = _config["Environments"] ?? "";
             CSTAppsRootPath = _config["CSTAppsRootPath"] ?? @"C:\CST Apps";
 
+            _logger.LogInformation("Config.LoadCurrentSettings: StagingPath={StagingPath}", StagingPath);
+            Debug.WriteLine($"[Config] LoadCurrentSettings: StagingPath={StagingPath}");
+
             try
             {
                 var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? "servers.csv");
                 if (System.IO.File.Exists(csvPath))
                 {
-                    ServerList = System.IO.File.ReadAllLines(csvPath)
+                    var lines = System.IO.File.ReadAllLines(csvPath);
+                    _logger.LogInformation("Config.LoadCurrentSettings: servers.csv found at {Path} with {Count} lines", csvPath, lines.Length);
+                    Debug.WriteLine($"[Config] servers.csv: path={csvPath}, lines={lines.Length}");
+
+                    ServerList = lines
                         .Where(l => !string.IsNullOrWhiteSpace(l))
                         .Select(l =>
                         {
@@ -336,11 +140,20 @@ namespace ApplicationDeployment.Pages
                         })
                         .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
                         .ToList();
+
+                    _logger.LogInformation("Config.LoadCurrentSettings: Loaded {Count} servers", ServerList.Count);
+                    Debug.WriteLine($"[Config] Loaded servers={ServerList.Count}");
+                }
+                else
+                {
+                    _logger.LogWarning("Config.LoadCurrentSettings: servers.csv not found at {Path}", csvPath);
+                    Debug.WriteLine($"[Config] servers.csv not found: {csvPath}");
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Load servers failed");
+                Debug.WriteLine($"[Config] Load servers failed: {ex.Message}");
                 ServerList = new();
             }
 
@@ -349,12 +162,25 @@ namespace ApplicationDeployment.Pages
                 if (System.IO.File.Exists(AppExesFile))
                 {
                     var json = System.IO.File.ReadAllText(AppExesFile);
+                    _logger.LogInformation("Config.LoadCurrentSettings: appExes.json found at {Path}, size={Size} bytes", AppExesFile, json.Length);
+                    Debug.WriteLine($"[Config] appExes.json: path={AppExesFile}, size={json.Length} bytes");
+
                     AppExecutables = JsonSerializer.Deserialize<List<AppExeConfig>>(json) ?? new();
+
+                    _logger.LogInformation("Config.LoadCurrentSettings: AppExecutables loaded: {Count}", AppExecutables.Count);
+                    Debug.WriteLine($"[Config] AppExecutables count={AppExecutables.Count} Names=[{string.Join(", ", AppExecutables.Select(a=>a.Name).Take(10))}{(AppExecutables.Count>10?", ...":"")}]");
+                }
+                else
+                {
+                    _logger.LogWarning("Config.LoadCurrentSettings: appExes.json not found at {Path}", AppExesFile);
+                    Debug.WriteLine($"[Config] appExes.json not found: {AppExesFile}");
+                    AppExecutables = new();
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Load appExes failed");
+                Debug.WriteLine($"[Config] Load appExes failed: {ex.Message}");
                 AppExecutables = new();
             }
         }

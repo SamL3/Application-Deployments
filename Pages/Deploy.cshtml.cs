@@ -9,6 +9,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -35,6 +36,9 @@ namespace ApplicationDeployment.Pages
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
             _appExes = LoadAppExes();
+
+            _logger.LogInformation("Deploy ctor: appExes mappings loaded: {Count}", _appExes.Count);
+            Debug.WriteLine($"[Deploy] ctor: appExes mappings loaded: {_appExes.Count}. Keys: {string.Join(", ", _appExes.Keys.Take(10))}{(_appExes.Count>10?"...":"")}");
         }
 
         private sealed class AppExeEntry
@@ -71,6 +75,8 @@ namespace ApplicationDeployment.Pages
         public void OnGet()
         {
             LoadServers();
+            _logger.LogInformation("OnGet: Loaded {Count} servers", ServerList.Count);
+            Debug.WriteLine($"[Deploy] OnGet: Loaded {ServerList.Count} servers");
             BuildInventory();
         }
 
@@ -120,7 +126,6 @@ namespace ApplicationDeployment.Pages
             }
             catch (Exception ex)
             {
-                // Any unexpected bubble-ups get logged and an error event sent
                 _logger.LogError(ex, "Unexpected failure during deployment batch.");
                 await _hubContext.Clients.Client(HubConnectionId)
                     .SendAsync("ReceiveError", $"Deployment batch failed: {ex.Message}");
@@ -132,43 +137,68 @@ namespace ApplicationDeployment.Pages
 
         private void BuildInventory()
         {
+            var sw = Stopwatch.StartNew();
             AppBuildGroups = new List<AppBuildGroup>();
+
             var stagingPath = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
+            _logger.LogInformation("BuildInventory: stagingPath={Path}", stagingPath);
+            Debug.WriteLine($"[Deploy] BuildInventory: stagingPath={stagingPath}");
+
             if (!Directory.Exists(stagingPath))
             {
                 _logger.LogWarning("Staging path missing: {Path}", stagingPath);
+                Debug.WriteLine($"[Deploy] BuildInventory: staging path missing: {stagingPath}");
                 return;
             }
 
+            var appDirs = Directory.GetDirectories(stagingPath);
+            _logger.LogInformation("BuildInventory: Found {Count} app directories", appDirs.Length);
+            Debug.WriteLine($"[Deploy] BuildInventory: Found {appDirs.Length} app directories");
+
             var envSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var appDir in Directory.GetDirectories(stagingPath))
+            foreach (var appDir in appDirs)
             {
                 var appName = Path.GetFileName(appDir);
                 if (string.IsNullOrWhiteSpace(appName)) continue;
 
-                var variants = new List<AppBuildVariant>();
                 _appExes.TryGetValue(appName, out var exeName);
                 exeName ??= string.Empty;
 
-                foreach (var buildDir in Directory.GetDirectories(appDir))
+                _logger.LogInformation("BuildInventory: App={App} exeName={Exe}", appName, string.IsNullOrEmpty(exeName) ? "(not configured)" : exeName);
+                Debug.WriteLine($"[Deploy] App={appName} exeName={(string.IsNullOrEmpty(exeName)?"(not configured)":exeName)}");
+
+                var variants = new List<AppBuildVariant>();
+                var buildDirs = Directory.GetDirectories(appDir);
+                Debug.WriteLine($"[Deploy]  App={appName}: build dirs={buildDirs.Length}");
+
+                foreach (var buildDir in buildDirs)
                 {
                     var buildName = Path.GetFileName(buildDir);
                     if (string.IsNullOrWhiteSpace(buildName)) continue;
 
-                    var neutralExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(Path.Combine(buildDir, exeName));
+                    var neutralExePath = Path.Combine(buildDir, exeName);
+                    var neutralExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(neutralExePath);
+                    Debug.WriteLine($"[Deploy]   Build={buildName}: neutralExePath={neutralExePath} exists={neutralExe}");
+
                     if (neutralExe)
                     {
                         variants.Add(new AppBuildVariant { Build = buildName, Environment = null });
                     }
                     else
                     {
-                        // environment-specific subfolders
-                        foreach (var envDir in Directory.GetDirectories(buildDir))
+                        var envDirs = Directory.GetDirectories(buildDir);
+                        Debug.WriteLine($"[Deploy]   Build={buildName}: env dirs={envDirs.Length}");
+                        foreach (var envDir in envDirs)
                         {
                             var envName = Path.GetFileName(envDir);
                             if (string.IsNullOrWhiteSpace(envName)) continue;
-                            if (!string.IsNullOrEmpty(exeName) && System.IO.File.Exists(Path.Combine(envDir, exeName)))
+
+                            var envExePath = Path.Combine(envDir, exeName);
+                            var hasExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(envExePath);
+                            Debug.WriteLine($"[Deploy]    Env={envName}: exePath={envExePath} exists={hasExe}");
+
+                            if (hasExe)
                             {
                                 variants.Add(new AppBuildVariant { Build = buildName, Environment = envName });
                                 envSet.Add(envName);
@@ -179,7 +209,6 @@ namespace ApplicationDeployment.Pages
 
                 if (variants.Count > 0)
                 {
-                    // Order: newest build first (by directory creation time)
                     variants = variants
                         .OrderByDescending(v =>
                         {
@@ -199,11 +228,24 @@ namespace ApplicationDeployment.Pages
                         AppName = appName,
                         Variants = variants
                     });
+
+                    _logger.LogInformation("BuildInventory: App={App} variants={Count}", appName, variants.Count);
+                    Debug.WriteLine($"[Deploy] App={appName}: variants={variants.Count} -> [{string.Join(", ", variants.Take(5).Select(v => v.Display))}{(variants.Count>5?", ...":"")}]");
+                }
+                else
+                {
+                    _logger.LogWarning("BuildInventory: App={App} had 0 variants (exe missing in builds?)", appName);
+                    Debug.WriteLine($"[Deploy] App={appName}: 0 variants (exe missing?)");
                 }
             }
 
             AppBuildGroups = AppBuildGroups.OrderBy(g => g.AppName).ToList();
             Environments = envSet.OrderBy(e => e).Select(e => new SelectListItem { Value = e, Text = e }).ToList();
+
+            sw.Stop();
+            _logger.LogInformation("BuildInventory completed: appsListed={Apps} envs={Envs} elapsed={Ms}ms",
+                AppBuildGroups.Count, Environments.Count, sw.ElapsedMilliseconds);
+            Debug.WriteLine($"[Deploy] BuildInventory done: appsListed={AppBuildGroups.Count}, envs={Environments.Count}, elapsed={sw.ElapsedMilliseconds}ms");
         }
 
         private async Task CopyFilesAsync(string selectedServer, string selectedApp, string selectedBuild, string? environment, string hubConnectionId)
@@ -259,7 +301,6 @@ namespace ApplicationDeployment.Pages
                         _logger.LogWarning(ex, "Failed creating directory for {DestFile}", destFile);
                         await _hubContext.Clients.Client(hubConnectionId)
                             .SendAsync("ReceiveError", $"Failed to create folder for: {destFile} ({ex.Message})");
-                        // Continue to next file
                         int progress1 = total == 0 ? 100 : (int)((copied + failed) * 100.0 / total);
                         await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveProgress", progress1);
                         continue;
@@ -392,35 +433,63 @@ namespace ApplicationDeployment.Pages
         {
             var appExesPath = Path.Combine(_env.WebRootPath, "appExes.json");
             if (!System.IO.File.Exists(appExesPath))
+            {
+                _logger.LogWarning("LoadAppExes: appExes.json not found at {Path}", appExesPath);
+                Debug.WriteLine($"[Deploy] LoadAppExes: file not found: {appExesPath}");
                 return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
 
             try
             {
                 var jsonString = System.IO.File.ReadAllText(appExesPath);
+                Debug.WriteLine($"[Deploy] LoadAppExes: Read {jsonString.Length} chars from appExes.json");
+
+                using var doc = JsonDocument.Parse(jsonString);
+                var kind = doc.RootElement.ValueKind;
 
                 // 1) Try the dictionary format: { "AppA": "AppA.exe", ... }
-                var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(jsonString);
-                if (dict != null && dict.Count > 0)
-                    return new Dictionary<string, string>(dict, StringComparer.OrdinalIgnoreCase);
-
-                // 2) Try the list format saved by Config: [ { "name": "...", "exe": "...", "envInShortcut": true }, ... ]
-                var list = JsonSerializer.Deserialize<List<AppExeEntry>>(jsonString);
-                if (list != null && list.Count > 0)
+                if (kind == JsonValueKind.Object)
                 {
-                    return list
-                        .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Exe))
-                        .ToDictionary(e => e.Name, e => e.Exe, StringComparer.OrdinalIgnoreCase);
+                    var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(jsonString);
+                    if (dict != null && dict.Count > 0)
+                    {
+                        _logger.LogInformation("LoadAppExes: Parsed dict format with {Count} entries", dict.Count);
+                        Debug.WriteLine($"[Deploy] LoadAppExes: dict format entries={dict.Count}");
+                        return new Dictionary<string, string>(dict, StringComparer.OrdinalIgnoreCase);
+                    }
+                }
+                // 2) Try the list format saved by Config: [ { "name": "...", "exe": "...", "envInShortcut": true }, ... ]
+                else if (kind == JsonValueKind.Array)
+                {
+                    var list = JsonSerializer.Deserialize<List<AppExeEntry>>(jsonString);
+                    if (list != null && list.Count > 0)
+                    {
+                        var mapped = list
+                            .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Exe))
+                            .ToDictionary(e => e.Name, e => e.Exe, StringComparer.OrdinalIgnoreCase);
+
+                        _logger.LogInformation("LoadAppExes: Parsed list format with {Count} valid entries", mapped.Count);
+                        Debug.WriteLine($"[Deploy] LoadAppExes: list format entries={mapped.Count}");
+                        return mapped;
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("LoadAppExes: Unexpected JSON root type: {Kind}", kind);
                 }
 
-                _logger.LogWarning("appExes.json parsed but contained no mappings.");
+                _logger.LogWarning("LoadAppExes: appExes.json parsed but contained no mappings.");
+                Debug.WriteLine("[Deploy] LoadAppExes: parsed but no mappings");
             }
             catch (JsonException ex)
             {
-                _logger.LogWarning(ex, "Failed to parse appExes.json; no applications will be listed.");
+                _logger.LogWarning(ex, "appExes.json is not valid JSON.");
+                Debug.WriteLine($"[Deploy] LoadAppExes: JsonException: {ex.Message}");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error reading appExes.json.");
+                Debug.WriteLine($"[Deploy] LoadAppExes: Exception: {ex.Message}");
             }
 
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);

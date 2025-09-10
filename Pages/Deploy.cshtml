@@ -5,10 +5,10 @@
 <form id="deploymentForm" method="post" onsubmit="event.preventDefault(); startCopy();" class="my-3">
     @Html.AntiForgeryToken()
     <input type="hidden" id="hubConnectionId" name="HubConnectionId" />
-    <h1 class="page-title">Application Deployment</h1>
+    <h1 class="page-title">Deploy Applications </h1>
 
     <div class="row g-4">
-        <div class="col-lg-3">
+        <div class="col-lg-4">
             <!-- Servers + Actions (unchanged) -->
             <div class="card shadow-sm mb-4">
                 <div class="card-header">Servers</div>
@@ -81,7 +81,7 @@
 
 
         <!-- Apps grid on the right, rendered similar to Remove -->
-        <div class="col-lg-9">
+        <div class="col-lg-8">
             <div class="row row-cols-1 row-cols-md-2 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
                 @if (Model.AppBuildGroups == null || Model.AppBuildGroups.Count == 0)
                 {

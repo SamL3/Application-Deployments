@@ -2,13 +2,13 @@
 @model ApplicationDeployment.Pages.RemoveModel
 @using System.Text.Json
 
-<h1 class="page-title">Remove — Deployed Applications</h1>
+<h1 class="page-title">Remove Applications</h1>
 
 <form id="maintenanceForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
     <div class="row g-4">
         <!-- LEFT COLUMN: Servers + Actions stacked -->
-        <div class="col-lg-3">
+        <div class="col-lg-4">
             <div class="card shadow-sm mb-4">
                 <div class="card-header">Servers</div>
                 <div class="card-body p-2">
@@ -59,7 +59,7 @@
         </div>
 
         <!-- CENTER: Deployments -->
-        <div class="col-lg-9">
+        <div class="col-lg-8">
             <div class="card shadow-sm h-100">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <span>Deployments on Selected Servers</span>

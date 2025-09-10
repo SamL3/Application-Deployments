@@ -157,9 +157,11 @@ namespace ApplicationDeployment.Pages
                         }
 
                         SafeDeleteDirectory(basePath);
+                        var delCount = TryDeleteShortcuts(server, app, null);
+                        _logger.LogInformation("Removed app folder {Path} and {Count} shortcut(s) on {Server}", basePath, delCount, server);
+
                         results.Add(new { app, success = true, message = "Removed successfully" });
                         successCount++;
-                        _logger.LogInformation("Removed app folder {Path} on {Server}", basePath, server);
                     }
                     catch (Exception ex)
                     {
@@ -236,9 +238,11 @@ namespace ApplicationDeployment.Pages
                         }
 
                         SafeDeleteDirectory(buildPath);
+                        var delCount = TryDeleteShortcuts(server, app, build);
+                        _logger.LogInformation("Removed build {Build} of app {App} and {Count} shortcut(s) on {Server}", build, app, delCount, server);
+
                         results.Add(new { app, build, success = true, message = "Removed" });
                         successCount++;
-                        _logger.LogInformation("Removed build {Build} of app {App} on {Server}", build, app, server);
                     }
                     catch (Exception ex)
                     {
@@ -290,7 +294,9 @@ namespace ApplicationDeployment.Pages
                     }
 
                     SafeDeleteDirectory(basePath);
-                    _logger.LogInformation("Removed app folder {Path} on {Server}", basePath, server);
+                    var delCount = TryDeleteShortcuts(server, app, null);
+                    _logger.LogInformation("Removed app folder {Path} and {Count} shortcut(s) on {Server}", basePath, delCount, server);
+
                     return new JsonResult(new { success = true, message = $"App removed: {basePath}" });
                 }
                 else
@@ -306,7 +312,9 @@ namespace ApplicationDeployment.Pages
                     }
 
                     SafeDeleteDirectory(buildPath);
-                    _logger.LogInformation("Removed build folder {Path} on {Server}", buildPath, server);
+                    var delCount = TryDeleteShortcuts(server, app, build);
+                    _logger.LogInformation("Removed build folder {Path} and {Count} shortcut(s) on {Server}", buildPath, delCount, server);
+
                     return new JsonResult(new { success = true, message = $"Build removed: {buildPath}" });
                 }
             }
@@ -367,6 +375,40 @@ namespace ApplicationDeployment.Pages
             }
 
             Directory.Delete(full, true);
+        }
+
+        // Delete shortcuts matching an app or a specific app+build on the remote machine.
+        private int TryDeleteShortcuts(string server, string app, string? build)
+        {
+            try
+            {
+                var shortcutDir = $@"\\{server}\C$\CSTApps";
+                if (!Directory.Exists(shortcutDir))
+                {
+                    _logger.LogWarning("Shortcut directory not found: {Dir}", shortcutDir);
+                    return 0;
+                }
+
+                var pattern = build == null ? $"{app} *.lnk" : $"{app} {build}*.lnk";
+                var files = Directory.GetFiles(shortcutDir, pattern);
+                var deleted = 0;
+                foreach (var f in files)
+                {
+                    try { System.IO.File.Delete(f); deleted++; }
+                    catch (Exception ex) { _logger.LogWarning(ex, "Failed to delete shortcut {File}", f); }
+                }
+
+                if (deleted > 0)
+                {
+                    _logger.LogInformation("Deleted {Count} shortcut(s) in {Dir} with pattern {Pattern}", deleted, shortcutDir, pattern);
+                }
+                return deleted;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting shortcuts for app={App} build={Build} on {Server}", app, build ?? "(none)", server);
+                return 0;
+            }
         }
     }
 }
