@@ -22,7 +22,7 @@ namespace ApplicationDeployment.Pages
         private readonly IConfiguration _config;
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<DeployModel> _logger;
-        private readonly Dictionary<string, string> _appExes;
+        private readonly Dictionary<string, AppExeEntry> _appExes;
         private readonly IHubContext<CopyHub> _hubContext;
 
         public DeployModel(
@@ -40,6 +40,8 @@ namespace ApplicationDeployment.Pages
             _logger.LogInformation("Deploy ctor: appExes mappings loaded: {Count}", _appExes.Count);
             Debug.WriteLine($"[Deploy] ctor: appExes mappings loaded: {_appExes.Count}. Keys: {string.Join(", ", _appExes.Keys.Take(10))}{(_appExes.Count>10?"...":"")}");
         }
+
+        public string StagingPath { get; private set; } = string.Empty;
 
         private sealed class AppExeEntry
         {
@@ -78,6 +80,48 @@ namespace ApplicationDeployment.Pages
             _logger.LogInformation("OnGet: Loaded {Count} servers", ServerList.Count);
             Debug.WriteLine($"[Deploy] OnGet: Loaded {ServerList.Count} servers");
             BuildInventory();
+        }
+
+        private void LoadServers()
+        {
+            try
+            {
+                var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? "servers.csv");
+                if (System.IO.File.Exists(csvPath))
+                {
+                    var lines = System.IO.File.ReadAllLines(csvPath);
+                    ServerList = lines
+                        .Where(l => !string.IsNullOrWhiteSpace(l))
+                        .Select(l =>
+                        {
+                            var p = l.Split(',', StringSplitOptions.TrimEntries);
+                            return new ServerInfo
+                            {
+                                HostName = p.ElementAtOrDefault(0) ?? "",
+                                UserID = p.ElementAtOrDefault(1) ?? "",
+                                Description = p.ElementAtOrDefault(2) ?? ""
+                            };
+                        })
+                        .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
+                        .ToList();
+
+                    Servers = ServerList
+                        .Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName })
+                        .ToList();
+                }
+                else
+                {
+                    _logger.LogWarning("LoadServers: servers.csv not found at {Path}", csvPath);
+                    ServerList = new();
+                    Servers = new();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "LoadServers failed");
+                ServerList = new();
+                Servers = new();
+            }
         }
 
         public async Task<IActionResult> OnPostCopyAsync(
@@ -134,13 +178,14 @@ namespace ApplicationDeployment.Pages
 
             return new JsonResult(new { success = true, totalCopies = tasks.Count });
         }
-
+                
         private void BuildInventory()
         {
             var sw = Stopwatch.StartNew();
             AppBuildGroups = new List<AppBuildGroup>();
 
             var stagingPath = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
+            StagingPath = stagingPath;
             _logger.LogInformation("BuildInventory: stagingPath={Path}", stagingPath);
             Debug.WriteLine($"[Deploy] BuildInventory: stagingPath={stagingPath}");
 
@@ -152,9 +197,6 @@ namespace ApplicationDeployment.Pages
             }
 
             var appDirs = Directory.GetDirectories(stagingPath);
-            _logger.LogInformation("BuildInventory: Found {Count} app directories", appDirs.Length);
-            Debug.WriteLine($"[Deploy] BuildInventory: Found {appDirs.Length} app directories");
-
             var envSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var appDir in appDirs)
@@ -162,16 +204,11 @@ namespace ApplicationDeployment.Pages
                 var appName = Path.GetFileName(appDir);
                 if (string.IsNullOrWhiteSpace(appName)) continue;
 
-                _appExes.TryGetValue(appName, out var exeName);
-                exeName ??= string.Empty;
-
-                _logger.LogInformation("BuildInventory: App={App} exeName={Exe}", appName, string.IsNullOrEmpty(exeName) ? "(not configured)" : exeName);
-                Debug.WriteLine($"[Deploy] App={appName} exeName={(string.IsNullOrEmpty(exeName)?"(not configured)":exeName)}");
+                _appExes.TryGetValue(appName, out var exeEntry);
+                var exeName = exeEntry?.Exe ?? string.Empty;
 
                 var variants = new List<AppBuildVariant>();
                 var buildDirs = Directory.GetDirectories(appDir);
-                Debug.WriteLine($"[Deploy]  App={appName}: build dirs={buildDirs.Length}");
-
                 foreach (var buildDir in buildDirs)
                 {
                     var buildName = Path.GetFileName(buildDir);
@@ -179,7 +216,6 @@ namespace ApplicationDeployment.Pages
 
                     var neutralExePath = Path.Combine(buildDir, exeName);
                     var neutralExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(neutralExePath);
-                    Debug.WriteLine($"[Deploy]   Build={buildName}: neutralExePath={neutralExePath} exists={neutralExe}");
 
                     if (neutralExe)
                     {
@@ -188,7 +224,6 @@ namespace ApplicationDeployment.Pages
                     else
                     {
                         var envDirs = Directory.GetDirectories(buildDir);
-                        Debug.WriteLine($"[Deploy]   Build={buildName}: env dirs={envDirs.Length}");
                         foreach (var envDir in envDirs)
                         {
                             var envName = Path.GetFileName(envDir);
@@ -196,7 +231,6 @@ namespace ApplicationDeployment.Pages
 
                             var envExePath = Path.Combine(envDir, exeName);
                             var hasExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(envExePath);
-                            Debug.WriteLine($"[Deploy]    Env={envName}: exePath={envExePath} exists={hasExe}");
 
                             if (hasExe)
                             {
@@ -228,14 +262,6 @@ namespace ApplicationDeployment.Pages
                         AppName = appName,
                         Variants = variants
                     });
-
-                    _logger.LogInformation("BuildInventory: App={App} variants={Count}", appName, variants.Count);
-                    Debug.WriteLine($"[Deploy] App={appName}: variants={variants.Count} -> [{string.Join(", ", variants.Take(5).Select(v => v.Display))}{(variants.Count>5?", ...":"")}]");
-                }
-                else
-                {
-                    _logger.LogWarning("BuildInventory: App={App} had 0 variants (exe missing in builds?)", appName);
-                    Debug.WriteLine($"[Deploy] App={appName}: 0 variants (exe missing?)");
                 }
             }
 
@@ -347,8 +373,8 @@ namespace ApplicationDeployment.Pages
         private void CreateShortcut(string selectedServer, string selectedApp, string selectedBuild, string? environment)
         {
             var stagingAppsRoot = _config["CSTApps"] ?? throw new InvalidOperationException("CSTApps not configured");
-            var exeName = _appExes.TryGetValue(selectedApp, out var exe)
-                ? exe
+            var exeName = _appExes.TryGetValue(selectedApp, out var entry)
+                ? entry.Exe
                 : throw new InvalidOperationException($"No EXE configured for app '{selectedApp}' (appExes.json).");
 
             var targetOnRemote = environment == null
@@ -382,10 +408,10 @@ namespace ApplicationDeployment.Pages
                 shortcut.Description = environment == null
                     ? $"{selectedApp} {selectedBuild}"
                     : $"{selectedApp} {selectedBuild} ({environment})";
-                if (environment != null)
-                {
-                    shortcut.Arguments = $"-Mod {environment} -SubMod {environment}";
-                }
+               if (environment != null && entry != null && entry.EnvInShortcut)
+               {
+                   shortcut.Arguments = $"-Mod {environment} -SubMod {environment}";
+               }
                 shortcut.Save();
 
                 if (!System.IO.File.Exists(localShortcutPath))
@@ -408,91 +434,55 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        private void LoadServers()
-        {
-            var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? throw new InvalidOperationException("CsvFilePath not configured"));
-            var serverLines = System.IO.File.ReadAllLines(csvPath);
-            ServerList = serverLines
-                .Where(line => !string.IsNullOrWhiteSpace(line))
-                .Select(line =>
-                {
-                    var p = line.Split(',', StringSplitOptions.TrimEntries);
-                    return new ServerInfo
-                    {
-                        HostName = p.Length > 0 ? p[0] : string.Empty,
-                        UserID = p.Length > 1 ? p[1] : string.Empty,
-                        Description = p.Length > 2 ? p[2] : string.Empty
-                    };
-                })
-                .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
-                .ToList();
-            Servers = ServerList.Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName }).ToList();
-        }
-
-        private Dictionary<string, string> LoadAppExes()
+        private Dictionary<string, AppExeEntry> LoadAppExes()
         {
             var appExesPath = Path.Combine(_env.WebRootPath, "appExes.json");
             if (!System.IO.File.Exists(appExesPath))
             {
                 _logger.LogWarning("LoadAppExes: appExes.json not found at {Path}", appExesPath);
                 Debug.WriteLine($"[Deploy] LoadAppExes: file not found: {appExesPath}");
-                return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                return new Dictionary<string, AppExeEntry>(StringComparer.OrdinalIgnoreCase);
             }
 
             try
             {
                 var jsonString = System.IO.File.ReadAllText(appExesPath);
-                Debug.WriteLine($"[Deploy] LoadAppExes: Read {jsonString.Length} chars from appExes.json");
-
                 using var doc = JsonDocument.Parse(jsonString);
                 var kind = doc.RootElement.ValueKind;
 
-                // 1) Try the dictionary format: { "AppA": "AppA.exe", ... }
                 if (kind == JsonValueKind.Object)
                 {
-                    var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(jsonString);
+                   var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(jsonString);
                     if (dict != null && dict.Count > 0)
                     {
-                        _logger.LogInformation("LoadAppExes: Parsed dict format with {Count} entries", dict.Count);
-                        Debug.WriteLine($"[Deploy] LoadAppExes: dict format entries={dict.Count}");
-                        return new Dictionary<string, string>(dict, StringComparer.OrdinalIgnoreCase);
+                       // No EnvInShortcut info in dict format; default to false.
+                       return dict.ToDictionary(
+                           kvp => kvp.Key,
+                           kvp => new AppExeEntry { Name = kvp.Key, Exe = kvp.Value, EnvInShortcut = false },
+                           StringComparer.OrdinalIgnoreCase);
                     }
                 }
-                // 2) Try the list format saved by Config: [ { "name": "...", "exe": "...", "envInShortcut": true }, ... ]
                 else if (kind == JsonValueKind.Array)
                 {
-                    var list = JsonSerializer.Deserialize<List<AppExeEntry>>(jsonString);
+                   var list = JsonSerializer.Deserialize<List<AppExeEntry>>(jsonString);
                     if (list != null && list.Count > 0)
                     {
-                        var mapped = list
-                            .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Exe))
-                            .ToDictionary(e => e.Name, e => e.Exe, StringComparer.OrdinalIgnoreCase);
-
-                        _logger.LogInformation("LoadAppExes: Parsed list format with {Count} valid entries", mapped.Count);
-                        Debug.WriteLine($"[Deploy] LoadAppExes: list format entries={mapped.Count}");
-                        return mapped;
+                       return list
+                           .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Exe))
+                           .ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
                     }
                 }
-                else
-                {
-                    _logger.LogWarning("LoadAppExes: Unexpected JSON root type: {Kind}", kind);
-                }
-
-                _logger.LogWarning("LoadAppExes: appExes.json parsed but contained no mappings.");
-                Debug.WriteLine("[Deploy] LoadAppExes: parsed but no mappings");
             }
             catch (JsonException ex)
             {
                 _logger.LogWarning(ex, "appExes.json is not valid JSON.");
-                Debug.WriteLine($"[Deploy] LoadAppExes: JsonException: {ex.Message}");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error reading appExes.json.");
-                Debug.WriteLine($"[Deploy] LoadAppExes: Exception: {ex.Message}");
             }
 
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, AppExeEntry>(StringComparer.OrdinalIgnoreCase);
         }
 
         private IEnumerable<(string App, string Build, string? Environment)> ParseSelections(IEnumerable<string> selections)

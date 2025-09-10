@@ -62,7 +62,9 @@
                 <div class="card-body d-flex flex-column">
                     <div class="mb-3">
                         <button type="submit" class="btn btn-primary w-100 mb-2">Deploy Selected</button>
-                        <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100">Clear Selection</button>
+                        <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100 mb-2">Clear Selection</button>
+                        <button type="button" id="openRootBtn" class="btn btn-outline-info w-100"
+                                data-path="@Model.StagingPath">Open Root App Folder</button>
                     </div>
 
                     <div class="small mb-2"><strong>Selected Builds</strong></div>
@@ -78,7 +80,6 @@
                 </div>
             </div>
         </div>
-
 
         <!-- Apps grid on the right, rendered similar to Remove -->
         <div class="col-lg-8">
@@ -179,8 +180,25 @@
     const envSelect = document.getElementById('envSelect');
     const deployBtn = document.querySelector('button[type="submit"]');
     const statusBox = document.getElementById('statusMessage');
+    const openRootBtn = document.getElementById('openRootBtn');
 
     let selectedServers = [];
+
+    if (openRootBtn) {
+        openRootBtn.addEventListener('click', function(e){
+            e.preventDefault();
+            const p = this.dataset.path || '';
+            if (!p) { alert('Root App folder (StagingPath) not configured.'); return; }
+            let url = p;
+            if (url.startsWith('\\\\')) {
+                url = 'file:' + url.replace(/\\/g, '/'); // -> file://server/share/path
+            } else {
+                url = 'file:///' + url.replace(/\\/g, '/'); // -> file:///C:/Path
+            }
+            try { window.open(url, '_blank'); }
+            catch { alert('Your browser blocked opening local folders.'); }
+        });
+    }
 
     // Server row click
     document.querySelectorAll('.server-row').forEach(row => {
@@ -310,7 +328,7 @@
                 const show = !env || cbEnv === '' || cbEnv === env;
                 row.style.display = show ? '' : 'none';
                 if (show) visibleCount++;
-                else if (!show) cb.checked = cb.checked && cb.checked; // no-op to keep state; summary uses visible only
+                else if (!show) cb.checked = cb.checked && cb.checked; // preserve
             });
             const badge = card.querySelector(`[data-app-badge="${CSS.escape(app)}"]`);
             if (badge) badge.textContent = visibleCount;
@@ -336,7 +354,6 @@
         statusBox.textContent += m + "\n";
         statusBox.scrollTop = statusBox.scrollHeight;
     });
-    // New: dedicated error channel
     connection.on("ReceiveError", m => {
         statusBox.textContent += "[ERROR] " + m + "\n";
         statusBox.scrollTop = statusBox.scrollHeight;
@@ -357,14 +374,13 @@
         if(!selections.length){ alert('Select at least one build.'); return; }
 
         progressContainer.classList.remove('d-none');
-        statusBox.textContent = ''; // Clear previous logs
+        statusBox.textContent = '';
         deployBtn.disabled = true;
 
         const form = document.getElementById('deploymentForm');
         const fd = new FormData(form);
         fd.set('HubConnectionId', document.getElementById('hubConnectionId').value);
 
-        // Only send visible checked selections
         fd.delete('Selections');
         selections.forEach(s=>fd.append('Selections', s.value));
 
@@ -395,7 +411,6 @@
         });
     };
 
-    // ... existing UI wiring for builds and env filter remains unchanged ...
 })();
 </script>
 }
