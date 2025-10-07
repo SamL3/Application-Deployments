@@ -78,27 +78,16 @@ namespace ApplicationDeployment.Pages
 
         public void OnGet()
         {
-            var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? throw new InvalidOperationException("CsvFilePath not configured"));
-            var serverLines = System.IO.File.ReadAllLines(csvPath);
-            
-            // Parse CSV with hostname, userid, description
-            ServerList = serverLines
-                .Where(line => !string.IsNullOrWhiteSpace(line))
-                .Select(line =>
-                {
-                    var parts = line.Split(',', StringSplitOptions.TrimEntries);
-                    return new ServerInfo
-                    {
-                        HostName = parts.Length > 0 ? parts[0] : string.Empty,
-                        UserID = parts.Length > 1 ? parts[1] : string.Empty,
-                        Description = parts.Length > 2 ? parts[2] : string.Empty
-                    };
-                })
+            var serversSection = _config.GetSection("Servers");
+            var serverList = serversSection.Get<List<ServerInfo>>() ?? new List<ServerInfo>();
+
+            ServerList = serverList
                 .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
                 .ToList();
 
-            // Keep legacy format for backward compatibility
-            Servers = ServerList.Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName }).ToList();
+            Servers = ServerList
+                .Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName })
+                .ToList();
 
             var stagingPath = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
             if (Directory.Exists(stagingPath))
@@ -259,15 +248,29 @@ namespace ApplicationDeployment.Pages
             }
         }
 
+        private static string ToFileUrl(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            if (path.StartsWith(@"\\"))
+                return "file:" + path.Replace("\\", "/"); // -> file://server/C$/CSTApps
+            return "file:///" + path.Replace("\\", "/");  // -> file:///C:/CSTApps
+        }
+
         private async Task CreateShortcutsAsync(string server, string app, string version, bool envInShortcut, string hubConnectionId)
         {
             foreach (var env in _environments)
             {
                 try
                 {
-                    CreateShortcutVariant(server, app, version, env, envInShortcut);
-                    await _hubContext.Clients.Client(hubConnectionId)
-                        .SendAsync("ReceiveMessage", $"Shortcut created: {app} {version} {env}");
+                    var remotePath = CreateShortcutVariant(server, app, version, env, envInShortcut);
+                    if (!string.IsNullOrEmpty(remotePath))
+                    {
+                        var name = Path.GetFileName(remotePath);
+                        var folder = Path.GetDirectoryName(remotePath)!;
+                        var link = ToFileUrl(folder);
+                        await _hubContext.Clients.Client(hubConnectionId)
+                            .SendAsync("ReceiveMessage", $"Shortcut created: {name} — {folder} ({link})");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -276,7 +279,7 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        private void CreateShortcutVariant(string server, string app, string version, string environment, bool envInShortcut)
+        private string? CreateShortcutVariant(string server, string app, string version, string environment, bool envInShortcut)
         {
             if (!_exeMap.TryGetValue(app, out var exeName))
                 throw new InvalidOperationException($"No EXE configured for {app}");
@@ -287,13 +290,11 @@ namespace ApplicationDeployment.Pages
             string arguments = "";
             if (envInShortcut)
             {
-                // C:\CSTApps\App\Version\Exe + args
                 targetPath = $@"C:\{root}\{app}\{version}\{exeName}";
                 arguments = $"-Configuration {environment} -Mode {environment}";
             }
             else
             {
-                // C:\CSTApps\App\Version\Env\Exe
                 targetPath = $@"C:\{root}\{app}\{version}\{environment}\{exeName}";
             }
 
@@ -301,7 +302,7 @@ namespace ApplicationDeployment.Pages
             if (!Directory.Exists(shortcutDir))
             {
                 _logger.LogWarning("Shortcut directory missing: {Dir}", shortcutDir);
-                return;
+                return null;
             }
 
             var shortcutName = $"{app} {version} {environment}.lnk";
@@ -325,30 +326,24 @@ namespace ApplicationDeployment.Pages
             {
                 System.IO.File.Copy(localShortcutPath, remoteShortcutPath, true);
                 System.IO.File.Delete(localShortcutPath);
+                return remoteShortcutPath;
             }
+            return null;
         }
 
         private (Dictionary<string,string> exeMap, Dictionary<string,bool> envFlag) LoadAppExeMetadata()
         {
-            var path = Path.Combine(_env.WebRootPath, "appExes.json");
+            // Load AppExes from appconfig.json via IConfiguration
+            var appExesSection = _config.GetSection("AppExes");
+            var appExeRecords = appExesSection.Get<List<AppExeRecord>>() ?? new List<AppExeRecord>();
+
             var exeMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var flagMap = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-            if (System.IO.File.Exists(path))
+
+            foreach (var r in appExeRecords.Where(r => !string.IsNullOrWhiteSpace(r.Name) && !string.IsNullOrWhiteSpace(r.Exe)))
             {
-                try
-                {
-                    var json = System.IO.File.ReadAllText(path);
-                    var list = JsonSerializer.Deserialize<List<AppExeRecord>>(json) ?? new();
-                    foreach (var r in list.Where(r => !string.IsNullOrWhiteSpace(r.Name) && !string.IsNullOrWhiteSpace(r.Exe)))
-                    {
-                        exeMap[r.Name] = r.Exe;
-                        flagMap[r.Name] = r.EnvInShortcut;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to parse appExes.json");
-                }
+                exeMap[r.Name] = r.Exe;
+                flagMap[r.Name] = r.EnvInShortcut;
             }
             return (exeMap, flagMap);
         }
@@ -358,6 +353,11 @@ namespace ApplicationDeployment.Pages
             public string Name { get; set; } = "";
             public string Exe { get; set; } = "";
             public bool EnvInShortcut { get; set; }
+        }
+
+        private class AppExeRecordWrapper
+        {
+            public List<AppExeRecord> AppExes { get; set; } = new();
         }
 
         // Add this method inside the IndexModel class

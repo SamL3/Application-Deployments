@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Management;
+using ApplicationDeployment.Models;
 
 namespace ApplicationDeployment.Pages
 {
@@ -33,18 +34,19 @@ namespace ApplicationDeployment.Pages
         {
             try
             {
-                var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? throw new InvalidOperationException("CsvFilePath not configured"));
-                if (!System.IO.File.Exists(csvPath))
+                var serversSection = _config.GetSection("Servers");
+                if (!serversSection.Exists())
                     return new JsonResult(Array.Empty<string>());
 
-                var servers = System.IO.File.ReadAllLines(csvPath)
-                    .Where(l => !string.IsNullOrWhiteSpace(l))
-                    .Select(l => l.Split(',', StringSplitOptions.TrimEntries)[0])
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                var servers = serversSection.Get<List<ServerInfo>>() ?? new List<ServerInfo>();
+                
+                // Return just hostnames to maintain compatibility with existing JavaScript
+                var serverNames = servers
+                    .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
+                    .Select(s => s.HostName)
                     .ToList();
-
-                return new JsonResult(servers);
+                
+                return new JsonResult(serverNames);
             }
             catch (Exception ex)
             {

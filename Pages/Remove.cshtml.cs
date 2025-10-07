@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 
 namespace ApplicationDeployment.Pages
 {
@@ -31,25 +32,13 @@ namespace ApplicationDeployment.Pages
 
         public void OnGet()
         {
-            var csvPath = Path.Combine(_env.WebRootPath, _config["CsvFilePath"] ?? throw new InvalidOperationException("CsvFilePath not configured"));
-            var serverLines = System.IO.File.ReadAllLines(csvPath);
+            var serverListConfig = _config.GetSection("Servers").Get<List<ServerInfo>>();
+            ServerList = serverListConfig ?? new List<ServerInfo>();
 
-            ServerList = serverLines
-                .Where(line => !string.IsNullOrWhiteSpace(line))
-                .Select(line =>
-                {
-                    var parts = line.Split(',', StringSplitOptions.TrimEntries);
-                    return new ServerInfo
-                    {
-                        HostName = parts.Length > 0 ? parts[0] : string.Empty,
-                        UserID = parts.Length > 1 ? parts[1] : string.Empty,
-                        Description = parts.Length > 2 ? parts[2] : string.Empty
-                    };
-                })
+            Servers = ServerList
                 .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
+                .Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName })
                 .ToList();
-
-            Servers = ServerList.Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName }).ToList();
         }
 
         // GET: /Remove?handler=Deployments&server=NAME
@@ -409,6 +398,44 @@ namespace ApplicationDeployment.Pages
                 _logger.LogError(ex, "Error deleting shortcuts for app={App} build={Build} on {Server}", app, build ?? "(none)", server);
                 return 0;
             }
+        }
+
+        // Represents a single executable record for an app.
+        private class AppExeRecord
+        {
+            public string Name { get; set; } = string.Empty;
+            public string Exe { get; set; } = string.Empty;
+            public bool EnvInShortcut { get; set; }
+        }
+
+        // Wrapper for deserializing a list of AppExeRecord objects from JSON.
+        private class AppExeRecordWrapper
+        {
+            public List<AppExeRecord> AppExes { get; set; } = new();
+        }
+
+        // Deserialize a JSON string into a list of AppExeRecord objects.
+        private List<AppExeRecord> DeserializeAppExeRecords(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return new List<AppExeRecord>();
+
+            try
+            {
+                var wrapper = JsonSerializer.Deserialize<AppExeRecordWrapper>(json);
+                return wrapper?.AppExes ?? new List<AppExeRecord>();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to deserialize AppExeRecords from JSON");
+                return new List<AppExeRecord>();
+            }
+        }
+
+        public string GetSearchLocations()
+        {
+            var servers = _config.GetSection("Servers").Get<List<string>>() ?? new();
+            var root = _config["CSTApps"] ?? "unknown";
+            return string.Join(", ", servers.Select(s => $@"\\{s}\C$\{root}"));
         }
     }
 }

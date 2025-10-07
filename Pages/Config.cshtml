@@ -3,6 +3,11 @@
 
 <h1 class="page-title">Configuration Settings</h1>
 
+@if (!string.IsNullOrEmpty(Model.ConfirmationMessage))
+{
+    <div class="alert alert-success">@Model.ConfirmationMessage</div>
+}
+
 <form id="configForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
 
@@ -33,6 +38,7 @@
                         <button type="button" class="btn btn-success" id="saveStagingPath">Save</button>
                     </div>
                     <div class="form-text">Example: \\server\c$\builds\</div>
+                    <div id="stagingPathStatus" class="small text-muted mt-1"></div>
                 </div>
             </div>
         </div>
@@ -79,7 +85,7 @@
                             </tbody>
                         </table>
                     </div>
-                    <div class="small text-muted mt-2">Stored in servers.csv</div>
+                    <div class="small text-muted mt-2">Stored in appconfig.json</div>
                 </div>
             </div>
         </div>
@@ -207,7 +213,46 @@
 document.addEventListener('DOMContentLoaded', () => {
     const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
     const appsTableBody = document.getElementById('appsTableBody');
+    const serversTableBody = document.getElementById('serversTableBody');
+    const apiTestsContainer = document.getElementById('apiTestsContainer');
 
+    // Add Server button
+    document.getElementById('addServerBtn').addEventListener('click', () => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td><input class="form-control form-control-sm" data-field="hostname" required /></td>
+            <td><input class="form-control form-control-sm" data-field="userid" /></td>
+            <td><input class="form-control form-control-sm" data-field="description" /></td>
+            <td><button type="button" class="btn btn-outline-danger btn-sm delete-server-btn">Del</button></td>`;
+        serversTableBody.appendChild(tr);
+    });
+
+    // Save Servers button
+    document.getElementById('saveServersBtn').addEventListener('click', async () => {
+        const servers = [];
+        serversTableBody.querySelectorAll('tr').forEach(tr => {
+            const hostname = tr.querySelector('[data-field="hostname"]').value.trim();
+            const userid = tr.querySelector('[data-field="userid"]').value.trim();
+            const description = tr.querySelector('[data-field="description"]').value.trim();
+            if (hostname) servers.push({ HostName: hostname, UserID: userid, Description: description });
+        });
+        try {
+            const resp = await fetch('/Config?handler=SaveServers', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/json',
+                    'RequestVerificationToken': token
+                },
+                body: JSON.stringify({ servers })
+            });
+            const result = await resp.json();
+            showStatus(result.message, result.success ? 'success':'danger');
+        } catch(e){
+            showStatus('Error saving servers: '+ e.message, 'danger');
+        }
+    });
+
+    // Add App button
     document.getElementById('addAppBtn').addEventListener('click', () => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -220,13 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
         appsTableBody.appendChild(tr);
     });
 
-    document.addEventListener('click', e => {
-        if (e.target.classList.contains('delete-app-btn'))
-            e.target.closest('tr').remove();
-        if (e.target.classList.contains('delete-server-btn'))
-            e.target.closest('tr').remove();
-    });
-
+    // Save Apps button
     document.getElementById('saveAppsBtn').addEventListener('click', async () => {
         const apps = [];
         appsTableBody.querySelectorAll('tr').forEach(tr => {
@@ -251,6 +290,116 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Add API Test button
+    document.getElementById('addApiTestBtn').addEventListener('click', () => {
+        const testId = 'test_' + Date.now();
+        const testDiv = document.createElement('div');
+        testDiv.className = 'border rounded p-2 mb-2 api-test';
+        testDiv.setAttribute('data-id', testId);
+        testDiv.innerHTML = `
+            <div class="row g-2 mb-1">
+                <div class="col-8">
+                    <input class="form-control form-control-sm api-desc" placeholder="Description" />
+                </div>
+                <div class="col-4 text-end">
+                    <button type="button" class="btn btn-outline-danger btn-sm delete-test-btn">Delete</button>
+                </div>
+            </div>
+            <input class="form-control form-control-sm mb-2 api-path" placeholder="Full script path (ps1 or exe)" />
+            <div class="small fw-semibold mb-1">Parameters</div>
+            <div class="params" style="max-height:120px; overflow:auto;">
+                <div class="text-muted small empty-params">No parameters</div>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm add-param-btn mt-1">Add Param</button>`;
+        
+        // Remove "No API tests defined" message if it exists
+        const noTestsMsg = apiTestsContainer.querySelector('.text-muted.small');
+        if (noTestsMsg && noTestsMsg.textContent.includes('No API tests defined')) {
+            noTestsMsg.remove();
+        }
+        
+        apiTestsContainer.appendChild(testDiv);
+    });
+
+    // Save API Tests button
+    document.getElementById('saveApiTestsBtn').addEventListener('click', async () => {
+        const tests = [];
+        apiTestsContainer.querySelectorAll('.api-test').forEach(testDiv => {
+            const id = testDiv.getAttribute('data-id');
+            const description = testDiv.querySelector('.api-desc').value.trim();
+            const scriptPath = testDiv.querySelector('.api-path').value.trim();
+            const parameters = [];
+            
+            testDiv.querySelectorAll('.param-row').forEach(paramRow => {
+                const name = paramRow.querySelector('.param-name').value.trim();
+                const value = paramRow.querySelector('.param-value').value.trim();
+                if (name || value) parameters.push({ Name: name, Value: value });
+            });
+            
+            if (description && scriptPath) {
+                tests.push({ Id: id, Description: description, ScriptPath: scriptPath, Parameters: parameters });
+            }
+        });
+        
+        try {
+            const resp = await fetch('/Config?handler=SaveApiTests', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/json',
+                    'RequestVerificationToken': token
+                },
+                body: JSON.stringify({ tests })
+            });
+            const result = await resp.json();
+            const statusEl = document.getElementById('apiTestsStatus');
+            statusEl.textContent = result.message;
+            statusEl.className = result.success ? 'small text-success mt-2' : 'small text-danger mt-2';
+        } catch(e){
+            const statusEl = document.getElementById('apiTestsStatus');
+            statusEl.textContent = 'Error saving API tests: ' + e.message;
+            statusEl.className = 'small text-danger mt-2';
+        }
+    });
+
+    // Event delegation for delete buttons and add param buttons
+    document.addEventListener('click', e => {
+        if (e.target.classList.contains('delete-app-btn'))
+            e.target.closest('tr').remove();
+        if (e.target.classList.contains('delete-server-btn'))
+            e.target.closest('tr').remove();
+        if (e.target.classList.contains('delete-test-btn')) {
+            e.target.closest('.api-test').remove();
+            // Show "No API tests defined" if no tests remain
+            if (apiTestsContainer.querySelectorAll('.api-test').length === 0) {
+                apiTestsContainer.innerHTML = '<div class="text-muted small">No API tests defined.</div>';
+            }
+        }
+        if (e.target.classList.contains('add-param-btn')) {
+            const paramsDiv = e.target.closest('.api-test').querySelector('.params');
+            const emptyMsg = paramsDiv.querySelector('.empty-params');
+            if (emptyMsg) emptyMsg.remove();
+            
+            const paramRow = document.createElement('div');
+            paramRow.className = 'input-group input-group-sm mb-1 param-row';
+            paramRow.innerHTML = `
+                <input class="form-control param-name" placeholder="Name" />
+                <input class="form-control param-value" placeholder="Value" />
+                <button type="button" class="btn btn-outline-danger param-del-btn">&times;</button>`;
+            paramsDiv.appendChild(paramRow);
+        }
+        if (e.target.classList.contains('param-del-btn')) {
+            const paramRow = e.target.closest('.param-row');
+            const paramsDiv = paramRow.closest('.params');
+            paramRow.remove();
+            
+            // Show "No parameters" if no params remain
+            if (paramsDiv.querySelectorAll('.param-row').length === 0) {
+                paramsDiv.innerHTML = '<div class="text-muted small empty-params">No parameters</div>';
+            }
+        }
+    });
+
+    // Save Environments button
     document.getElementById('saveEnvironmentsBtn').addEventListener('click', async () => {
         const environmentsCsv = document.getElementById('environmentsCsv').value.trim();
         const statusEl = document.getElementById('envStatus');
@@ -296,19 +445,62 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Existing JS for servers, api tests, staging path, dashboard unchanged below...
-    // (Keep previous script blocks; omitted here for brevity if already present above)
+    // Save Staging Path
+    document.getElementById('saveStagingPath').addEventListener('click', async () => {
+        const path = document.getElementById('stagingPath').value.trim();
+        const statusEl = document.getElementById('stagingPathStatus');
+        statusEl.textContent = 'Saving...';
+        try {
+            const resp = await fetch('/Config?handler=SaveStagingPath', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/x-www-form-urlencoded',
+                    'RequestVerificationToken': token
+                },
+                body: new URLSearchParams({ stagingPath: path })
+            });
+            const result = await resp.json();
+            statusEl.textContent = result.message;
+            statusEl.className = result.success ? 'small text-success' : 'small text-danger';
+        } catch(e){
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.className = 'small text-danger';
+        }
+    });
 
+    // Save Dashboard Options
+    document.getElementById('saveDashboardOptions').addEventListener('click', async () => {
+        const showApps = document.getElementById('showAppsToggle').checked;
+        const statusEl = document.getElementById('dashboardOptionsStatus');
+        statusEl.textContent = 'Saving...';
+        try {
+            const resp = await fetch('/Config?handler=SaveDashboardOptions', {
+                method:'POST',
+                headers:{
+                    'Content-Type':'application/x-www-form-urlencoded',
+                    'RequestVerificationToken': token
+                },
+                body: new URLSearchParams({ showApps })
+            });
+            const result = await resp.json();
+            statusEl.textContent = result.message;
+            statusEl.className = result.success ? 'small text-success' : 'small text-danger';
+        } catch(e){
+            statusEl.textContent = 'Error: ' + e.message;
+            statusEl.className = 'small text-danger';
+        }
+    });
+
+    // Export Configuration function
     window.exportConfiguration = function() {
-        // Extend export to include environments + new apps structure
         const servers = [];
         document.querySelectorAll('#serversTableBody tr').forEach(tr => {
             const hostname = tr.querySelector('[data-field="hostname"]')?.value.trim();
             if (!hostname) return;
             servers.push({
                 hostname,
-                userid: tr.querySelector('[data-field="userid"]').value_trim(),
-                description: tr.querySelector('[data-field="description"]').value_trim()
+                userid: tr.querySelector('[data-field="userid"]').value.trim(),
+                description: tr.querySelector('[data-field="description"]').value.trim()
             });
         });
         const apps = [];
@@ -335,13 +527,23 @@ document.addEventListener('DOMContentLoaded', () => {
         URL.revokeObjectURL(url);
     };
 
-    function showStatus(msg,type='info'){
-        const statusArea = document.getElementById('statusArea');
-        const statusMessage = document.getElementById('statusMessage');
-        statusArea.className = `alert alert-${type} py-2`;
-        statusMessage.textContent = msg;
-        statusArea.classList.remove('d-none');
-        setTimeout(()=>statusArea.classList.add('d-none'), 3500);
+    function showStatus(msg, type='info') {
+        // Create a temporary status message
+        const statusDiv = document.createElement('div');
+        statusDiv.className = `alert alert-${type} alert-dismissible fade show position-fixed`;
+        statusDiv.style.cssText = 'top: 20px; right: 20px; z-index: 1050; min-width: 300px;';
+        statusDiv.innerHTML = `
+            ${msg}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        document.body.appendChild(statusDiv);
+        
+        // Auto-remove after 3.5 seconds
+        setTimeout(() => {
+            if (statusDiv.parentNode) {
+                statusDiv.remove();
+            }
+        }, 3500);
     }
 });
 </script>

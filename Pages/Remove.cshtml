@@ -1,6 +1,8 @@
 ﻿@page
-@model ApplicationDeployment.Pages.RemoveModel
 @using System.Text.Json
+@model ApplicationDeployment.Pages.RemoveModel
+
+<h1>@ViewData["Title"]</h1>
 
 <h1 class="page-title">Remove Applications</h1>
 
@@ -110,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Server-side configured root (escaped safely)
-    const cstApps = @Html.Raw(JsonSerializer.Serialize(Model.CstApps ?? ""));
+    const cstApps = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CstApps ?? ""));
 
     const serverCheckboxes = document.querySelectorAll('.server-checkbox');
     const selectAllServers = document.getElementById('selectAllServers');

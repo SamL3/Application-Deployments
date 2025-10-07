@@ -2,6 +2,12 @@ using ApplicationDeployment.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Remove or comment out the default appsettings.json line if you want to fully replace it
+// builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
+
+// Add appconfig.json instead, with reloadOnChange to avoid locking
+builder.Configuration.AddJsonFile("appconfig.json", optional: true, reloadOnChange: true);
+
 // Add services to the container.
 builder.Services.AddRazorPages();
 builder.Services.AddSignalR();

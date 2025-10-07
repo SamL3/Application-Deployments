@@ -35,13 +35,14 @@ namespace ApplicationDeployment.Pages
             _env = env ?? throw new ArgumentNullException(nameof(env));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
-            _appExes = LoadAppExes();
+            _appExes = LoadAppExesFromConfig();
 
             _logger.LogInformation("Deploy ctor: appExes mappings loaded: {Count}", _appExes.Count);
             Debug.WriteLine($"[Deploy] ctor: appExes mappings loaded: {_appExes.Count}. Keys: {string.Join(", ", _appExes.Keys.Take(10))}{(_appExes.Count>10?"...":"")}");
         }
 
-        public string StagingPath { get; private set; } = string.Empty;
+        public string StagingPath { get; private set; } = string.Empty; // UNC source builds
+        public string CstAppsRootPath { get; private set; } = string.Empty; // Destination root on targets
 
         private sealed class AppExeEntry
         {
@@ -69,16 +70,26 @@ namespace ApplicationDeployment.Pages
         [BindProperty] public List<ServerInfo> ServerList { get; set; } = new();
         [BindProperty] public string[] SelectedServers { get; set; } = Array.Empty<string>();
 
-        [BindProperty] public string SelectedEnvironment { get; set; } = string.Empty; // (client-side filter)
+        [BindProperty] public string[] SelectedEnvironments { get; set; } = new[] { "Dev", "QA", "UAT" };
         public List<SelectListItem> Environments { get; set; } = new();
 
         public List<AppBuildGroup> AppBuildGroups { get; set; } = new();
 
         public void OnGet()
         {
-            LoadServers();
-            _logger.LogInformation("OnGet: Loaded {Count} servers", ServerList.Count);
-            Debug.WriteLine($"[Deploy] OnGet: Loaded {ServerList.Count} servers");
+            // Load servers from appconfig.json
+            var serversSection = _config.GetSection("Servers");
+            ServerList = serversSection.Get<List<ServerInfo>>() ?? new List<ServerInfo>();
+
+            // Load environments from appconfig.json (JSON array of strings)
+            var envs = _config.GetSection("Environments").Get<string[]>() ?? Array.Empty<string>();
+            Environments = envs.Select(e => new SelectListItem { Value = e, Text = e }).ToList();
+
+            // Load configured paths
+            StagingPath = _config["StagingPath"] ?? string.Empty; // UNC source
+            CstAppsRootPath = _config["CSTAppsRootPath"] ?? @"C:\\CSTApps"; // local root on targets
+
+            // Build inventory, etc.
             BuildInventory();
         }
 
@@ -127,77 +138,114 @@ namespace ApplicationDeployment.Pages
         public async Task<IActionResult> OnPostCopyAsync(
             [FromForm] string[] SelectedServers,
             [FromForm] string[] Selections,
-            [FromForm] string HubConnectionId)
+            [FromForm] string HubConnectionId,
+            [FromForm] string[] SelectedEnvironments)
         {
-            _logger.LogInformation("Copy requested. Hub={Hub} Servers={Servers} Selections={Selections}",
-                HubConnectionId,
-                SelectedServers == null ? "null" : string.Join(',', SelectedServers),
-                Selections == null ? "null" : string.Join(',', Selections));
-
-            if (SelectedServers == null || SelectedServers.Length == 0)
-                return new JsonResult(new { success = false, message = "Please select at least one server." });
-
-            if (Selections == null || Selections.Length == 0)
-                return new JsonResult(new { success = false, message = "Please select at least one build." });
-
-            var staging = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
-
-            var triples = ParseSelections(Selections)
-                .Where(t =>
-                {
-                    var path = t.Environment == null
-                        ? Path.Combine(staging, t.App, t.Build)
-                        : Path.Combine(staging, t.App, t.Build, t.Environment);
-                    return Directory.Exists(path);
-                })
-                .ToList();
-
-            if (triples.Count == 0)
-                return new JsonResult(new { success = false, message = "No valid build sources found." });
-
-            var tasks = new List<Task>();
-            foreach (var server in SelectedServers)
-            {
-                foreach (var t in triples)
-                {
-                    tasks.Add(CopyFilesAsync(server, t.App, t.Build, t.Environment, HubConnectionId));
-                }
-            }
-
             try
             {
+                _logger.LogInformation("Copy requested. Hub={Hub} Servers={Servers} Selections={Selections} Envs={Envs}",
+                    HubConnectionId,
+                    SelectedServers == null ? "null" : string.Join(',', SelectedServers),
+                    Selections == null ? "null" : string.Join(',', Selections),
+                    (SelectedEnvironments == null || SelectedEnvironments.Length == 0) ? "(none)" : string.Join(',', SelectedEnvironments));
+
+                if (SelectedServers == null || SelectedServers.Length == 0)
+                {
+                    _logger.LogWarning("No servers selected in request");
+                    return new JsonResult(new { success = false, message = "Please select at least one server." });
+                }
+
+                if (Selections == null || Selections.Length == 0)
+                {
+                    _logger.LogWarning("No build selections in request");
+                    return new JsonResult(new { success = false, message = "Please select at least one build." });
+                }
+
+                var staging = _config["StagingPath"];
+                if (string.IsNullOrWhiteSpace(staging))
+                {
+                    _logger.LogError("StagingPath not configured in appconfig.json");
+                    return new JsonResult(new { success = false, message = "StagingPath not configured." });
+                }
+
+                _logger.LogInformation("Using staging path: {StagingPath}", staging);
+
+                // Expand selections without an explicit environment into one per selected environment
+                var triples = ParseSelections(Selections)
+                    .SelectMany(t => t.Environment != null
+                        ? new[] { (App: t.App, Build: t.Build, Environment: t.Environment) }
+                        : ((SelectedEnvironments != null && SelectedEnvironments.Length > 0)
+                            ? SelectedEnvironments.Select(env => (App: t.App, Build: t.Build, Environment: (string?)env))
+                            : new[] { (App: t.App, Build: t.Build, Environment: (string?)null) }))
+                    .Select(t => 
+                    {
+                        var envInShortcut = _appExes.TryGetValue(t.App, out var e) && e.EnvInShortcut;
+                        var basePath = Path.Combine(staging, t.App, t.Build);
+                        var path = (!envInShortcut && t.Environment != null) ? Path.Combine(basePath, t.Environment) : basePath;
+                        var exists = Directory.Exists(path);
+                        _logger.LogInformation("Source check: App='{App}', Build='{Build}', Env='{Env}', Path='{Path}', Exists={Exists}", t.App, t.Build, t.Environment ?? "(none)", path, exists);
+                        return (t.App, t.Build, t.Environment, exists);
+                    })
+                    .Where(t => t.exists)
+                    .Select(t => (App: t.App, Build: t.Build, Environment: t.Environment))
+                    .ToList();
+
+                if (triples.Count == 0)
+                {
+                    _logger.LogWarning("No valid build sources found after filtering. Check source paths and existence.");
+                    return new JsonResult(new { success = false, message = "No valid build sources found. Please verify staging path and build selections." });
+                }
+
+                _logger.LogInformation("Starting deployment tasks. Valid triples found: {Count}", triples.Count);
+
+                var tasks = new List<Task>();
+                foreach (var server in SelectedServers)
+                    foreach (var t in triples)
+                        tasks.Add(CopyFilesAsync(server, t.App, t.Build, t.Environment, HubConnectionId));
+
                 await Task.WhenAll(tasks);
+                
+                _logger.LogInformation("All deployment tasks completed successfully. Total tasks: {Count}", tasks.Count);
+                return new JsonResult(new { success = true, totalCopies = tasks.Count });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unexpected failure during deployment batch.");
-                await _hubContext.Clients.Client(HubConnectionId)
-                    .SendAsync("ReceiveError", $"Deployment batch failed: {ex.Message}");
-                return new JsonResult(new { success = false, message = "One or more deployments failed unexpectedly." });
-            }
-
-            return new JsonResult(new { success = true, totalCopies = tasks.Count });
-        }
                 
+                if (!string.IsNullOrWhiteSpace(HubConnectionId))
+                {
+                    try
+                    {
+                        await _hubContext.Clients.Client(HubConnectionId)
+                            .SendAsync("ReceiveError", $"Deployment batch failed: {ex.Message}");
+                    }
+                    catch (Exception hubEx)
+                    {
+                        _logger.LogError(hubEx, "Failed to send error message to SignalR client");
+                    }
+                }
+                
+                return new JsonResult(new { success = false, message = $"Deployment failed: {ex.Message}" });
+            }
+        }
+
         private void BuildInventory()
         {
             var sw = Stopwatch.StartNew();
             AppBuildGroups = new List<AppBuildGroup>();
 
-            var stagingPath = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
-            StagingPath = stagingPath;
-            _logger.LogInformation("BuildInventory: stagingPath={Path}", stagingPath);
-            Debug.WriteLine($"[Deploy] BuildInventory: stagingPath={stagingPath}");
+            var inventoryRoot = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
+            _logger.LogInformation("BuildInventory: inventoryRoot={Path}", inventoryRoot);
+            Debug.WriteLine($"[Deploy] BuildInventory: inventoryRoot={inventoryRoot}");
 
-            if (!Directory.Exists(stagingPath))
+            if (!Directory.Exists(inventoryRoot))
             {
-                _logger.LogWarning("Staging path missing: {Path}", stagingPath);
-                Debug.WriteLine($"[Deploy] BuildInventory: staging path missing: {stagingPath}");
+                _logger.LogWarning("Inventory root path missing: {Path}", inventoryRoot);
+                Debug.WriteLine($"[Deploy] BuildInventory: inventory root path missing: {inventoryRoot}");
                 return;
             }
 
-            var appDirs = Directory.GetDirectories(stagingPath);
-            var envSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var appDirs = Directory.GetDirectories(inventoryRoot);
 
             foreach (var appDir in appDirs)
             {
@@ -235,7 +283,6 @@ namespace ApplicationDeployment.Pages
                             if (hasExe)
                             {
                                 variants.Add(new AppBuildVariant { Build = buildName, Environment = envName });
-                                envSet.Add(envName);
                             }
                         }
                     }
@@ -266,12 +313,29 @@ namespace ApplicationDeployment.Pages
             }
 
             AppBuildGroups = AppBuildGroups.OrderBy(g => g.AppName).ToList();
-            Environments = envSet.OrderBy(e => e).Select(e => new SelectListItem { Value = e, Text = e }).ToList();
+
+            // Keep Model.Environments exactly as loaded from configuration; do not augment with disk findings.
 
             sw.Stop();
             _logger.LogInformation("BuildInventory completed: appsListed={Apps} envs={Envs} elapsed={Ms}ms",
                 AppBuildGroups.Count, Environments.Count, sw.ElapsedMilliseconds);
             Debug.WriteLine($"[Deploy] BuildInventory done: appsListed={AppBuildGroups.Count}, envs={Environments.Count}, elapsed={sw.ElapsedMilliseconds}ms");
+        }
+            
+        private static bool FilesAreSame(FileInfo src, FileInfo dst)
+        {
+            if (src.Length != dst.Length) return false;
+            // SMB/FAT32 can have coarse time resolution; allow small skew
+            var delta = (src.LastWriteTimeUtc - dst.LastWriteTimeUtc).Duration();
+            return delta <= TimeSpan.FromSeconds(2);
+        }
+
+        private static string ToFileUrl(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+            if (path.StartsWith(@"\\"))
+                return "file:" + path.Replace("\\", "/"); // -> file://server/C$/CSTApps
+            return "file:///" + path.Replace("\\", "/");  // -> file:///C:/CSTApps
         }
 
         private async Task CopyFilesAsync(string selectedServer, string selectedApp, string selectedBuild, string? environment, string hubConnectionId)
@@ -279,9 +343,10 @@ namespace ApplicationDeployment.Pages
             try
             {
                 var stagingRoot = _config["StagingPath"]!;
-                var sourcePath = environment == null
-                    ? Path.Combine(stagingRoot, selectedApp, selectedBuild)
-                    : Path.Combine(stagingRoot, selectedApp, selectedBuild, environment);
+                var envInShortcut = _appExes.TryGetValue(selectedApp, out var entry) && entry.EnvInShortcut;
+
+                var baseSource = Path.Combine(stagingRoot, selectedApp, selectedBuild);
+                var sourcePath = (!envInShortcut && environment != null) ? Path.Combine(baseSource, environment) : baseSource;
 
                 if (!Directory.Exists(sourcePath))
                 {
@@ -291,14 +356,10 @@ namespace ApplicationDeployment.Pages
                 }
 
                 var cstAppsRoot = _config["CSTApps"] ?? "CSTApps";
-                var destPath = environment == null
-                    ? $@"\\{selectedServer}\C$\{cstAppsRoot}\{selectedApp}\{selectedBuild}"
-                    : $@"\\{selectedServer}\C$\{cstAppsRoot}\{selectedApp}\{selectedBuild}\{environment}";
+                var baseDest = $@"\\{selectedServer}\C$\{cstAppsRoot}\{selectedApp}\{selectedBuild}";
+                var destPath = (!envInShortcut && environment != null) ? Path.Combine(baseDest, environment) : baseDest;
 
-                try
-                {
-                    Directory.CreateDirectory(destPath);
-                }
+                try { Directory.CreateDirectory(destPath); }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to create destination folder {Dest}", destPath);
@@ -308,33 +369,42 @@ namespace ApplicationDeployment.Pages
                 }
 
                 var files = Directory.GetFiles(sourcePath, "*.*", SearchOption.AllDirectories);
-                int total = files.Length;
-                int copied = 0;
-                int failed = 0;
-
+                int total = files.Length, copied = 0, failed = 0;
                 foreach (var file in files)
                 {
                     var rel = Path.GetRelativePath(sourcePath, file);
                     var destFile = Path.Combine(destPath, rel);
 
-                    try
-                    {
-                        Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
-                    }
+                    try { Directory.CreateDirectory(Path.GetDirectoryName(destFile)!); }
                     catch (Exception ex)
                     {
                         failed++;
                         _logger.LogWarning(ex, "Failed creating directory for {DestFile}", destFile);
                         await _hubContext.Clients.Client(hubConnectionId)
                             .SendAsync("ReceiveError", $"Failed to create folder for: {destFile} ({ex.Message})");
-                        int progress1 = total == 0 ? 100 : (int)((copied + failed) * 100.0 / total);
-                        await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveProgress", progress1);
+                        int p1 = total == 0 ? 100 : (int)((copied + failed) * 100.0 / total);
+                        await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveProgress", p1);
                         continue;
                     }
 
                     try
                     {
-                        System.IO.File.Copy(file, destFile, true);
+                        // Skip copying if destination exists and file is effectively the same
+                        if (System.IO.File.Exists(destFile))
+                        {
+                            var srcInfo = new FileInfo(file);
+                            var dstInfo = new FileInfo(destFile);
+                            if (!FilesAreSame(srcInfo, dstInfo))
+                            {
+                                System.IO.File.Copy(file, destFile, true);
+                            }
+                        }
+                        else
+                        {
+                            System.IO.File.Copy(file, destFile, false);
+                        }
+
+                        // Count skipped files as processed so progress reaches 100%
                         copied++;
                     }
                     catch (Exception ex)
@@ -354,8 +424,15 @@ namespace ApplicationDeployment.Pages
 
                 if (failed == 0)
                 {
-                    CreateShortcut(selectedServer, selectedApp, selectedBuild, environment);
-                    await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveMessage", "Shortcut created.");
+                    var remoteShortcutPath = CreateShortcut(selectedServer, selectedApp, selectedBuild, environment);
+                    if (!string.IsNullOrEmpty(remoteShortcutPath))
+                    {
+                        var folder = Path.GetDirectoryName(remoteShortcutPath)!;
+                        var link = ToFileUrl(folder);
+                        var name = Path.GetFileName(remoteShortcutPath);
+                        await _hubContext.Clients.Client(hubConnectionId)
+                            .SendAsync("ReceiveMessage", $"Shortcut created: {name} — {folder} ({link})");
+                    }
                 }
                 else
                 {
@@ -370,27 +447,30 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        private void CreateShortcut(string selectedServer, string selectedApp, string selectedBuild, string? environment)
+        private string? CreateShortcut(string selectedServer, string selectedApp, string selectedBuild, string? environment)
         {
             var stagingAppsRoot = _config["CSTApps"] ?? throw new InvalidOperationException("CSTApps not configured");
             var exeName = _appExes.TryGetValue(selectedApp, out var entry)
                 ? entry.Exe
-                : throw new InvalidOperationException($"No EXE configured for app '{selectedApp}' (appExes.json).");
+                : throw new InvalidOperationException($"No EXE configured for app '{selectedApp}' (appconfig.json).");
 
-            var targetOnRemote = environment == null
-                ? $@"C:\{stagingAppsRoot}\{selectedApp}\{selectedBuild}\{exeName}"
-                : $@"C:\{stagingAppsRoot}\{selectedApp}\{selectedBuild}\{environment}\{exeName}";
+            var envInShortcut = entry!.EnvInShortcut;
+
+            var basePath = $@"C:\{stagingAppsRoot}\{selectedApp}\{selectedBuild}";
+            var targetOnRemote = envInShortcut
+                ? Path.Combine(basePath, exeName)
+                : (environment == null ? Path.Combine(basePath, exeName) : Path.Combine(basePath, environment, exeName));
 
             var remoteShortcutDir = $@"\\{selectedServer}\C$\CSTApps";
             if (!Directory.Exists(remoteShortcutDir))
             {
                 _logger.LogWarning("Remote shortcut dir missing: {Dir}", remoteShortcutDir);
-                return;
+                return null;
             }
 
             var shortcutName = environment == null
                 ? $"{selectedApp} {selectedBuild}.lnk"
-                : $"{selectedApp} {selectedBuild} {environment}.lnk";
+                : $"{selectedApp} {environment} {selectedBuild}.lnk";
 
             var remoteShortcutPath = Path.Combine(remoteShortcutDir, shortcutName);
 
@@ -408,25 +488,27 @@ namespace ApplicationDeployment.Pages
                 shortcut.Description = environment == null
                     ? $"{selectedApp} {selectedBuild}"
                     : $"{selectedApp} {selectedBuild} ({environment})";
-               if (environment != null && entry != null && entry.EnvInShortcut)
-               {
-                   shortcut.Arguments = $"-Mod {environment} -SubMod {environment}";
-               }
+                if (envInShortcut && !string.IsNullOrWhiteSpace(environment))
+                {
+                    shortcut.Arguments = $"-Mod {environment} -SubMod {environment}";
+                }
                 shortcut.Save();
 
                 if (!System.IO.File.Exists(localShortcutPath))
                 {
                     _logger.LogError("Local shortcut not created: {LocalPath}", localShortcutPath);
-                    return;
+                    return null;
                 }
 
                 System.IO.File.Copy(localShortcutPath, remoteShortcutPath, true);
                 _logger.LogInformation("Shortcut deployed: {Path}", remoteShortcutPath);
+                return remoteShortcutPath;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed shortcut creation for {Server} App={App} Build={Build} Env={Env}",
+                _logger.LogError(ex, "Failed shortcut creation for Server={Server} App={App} Build={Build} Env={Env}",
                     selectedServer, selectedApp, selectedBuild, environment ?? "(none)");
+                return null;
             }
             finally
             {
@@ -434,55 +516,19 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        private Dictionary<string, AppExeEntry> LoadAppExes()
+        private Dictionary<string, AppExeEntry> LoadAppExesFromConfig()
         {
-            var appExesPath = Path.Combine(_env.WebRootPath, "appExes.json");
-            if (!System.IO.File.Exists(appExesPath))
+            // Example: expects "AppExes" section in appconfig.json
+            var section = _config.GetSection("AppExes");
+            var entries = section.Get<List<AppExeEntry>>();
+            if (entries == null)
             {
-                _logger.LogWarning("LoadAppExes: appExes.json not found at {Path}", appExesPath);
-                Debug.WriteLine($"[Deploy] LoadAppExes: file not found: {appExesPath}");
+                _logger.LogWarning("LoadAppExesFromConfig: AppExes section missing or empty in appconfig.json");
                 return new Dictionary<string, AppExeEntry>(StringComparer.OrdinalIgnoreCase);
             }
-
-            try
-            {
-                var jsonString = System.IO.File.ReadAllText(appExesPath);
-                using var doc = JsonDocument.Parse(jsonString);
-                var kind = doc.RootElement.ValueKind;
-
-                if (kind == JsonValueKind.Object)
-                {
-                   var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(jsonString);
-                    if (dict != null && dict.Count > 0)
-                    {
-                       // No EnvInShortcut info in dict format; default to false.
-                       return dict.ToDictionary(
-                           kvp => kvp.Key,
-                           kvp => new AppExeEntry { Name = kvp.Key, Exe = kvp.Value, EnvInShortcut = false },
-                           StringComparer.OrdinalIgnoreCase);
-                    }
-                }
-                else if (kind == JsonValueKind.Array)
-                {
-                   var list = JsonSerializer.Deserialize<List<AppExeEntry>>(jsonString);
-                    if (list != null && list.Count > 0)
-                    {
-                       return list
-                           .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Exe))
-                           .ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
-                    }
-                }
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogWarning(ex, "appExes.json is not valid JSON.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error reading appExes.json.");
-            }
-
-            return new Dictionary<string, AppExeEntry>(StringComparer.OrdinalIgnoreCase);
+            return entries
+                .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Exe))
+                .ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
         }
 
         private IEnumerable<(string App, string Build, string? Environment)> ParseSelections(IEnumerable<string> selections)
@@ -491,7 +537,6 @@ namespace ApplicationDeployment.Pages
             {
                 if (string.IsNullOrWhiteSpace(s)) continue;
                 var parts = s.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                if (parts.Length == 0) continue;
 
                 // App|Build or App|Build|Env
                 if (parts.Length == 2)
@@ -503,6 +548,12 @@ namespace ApplicationDeployment.Pages
                     yield return (parts[0], parts[1], parts[2]);
                 }
             }
+        }
+
+        public string GetSearchLocations()
+        {
+            // Show the configured staging root path used to find builds
+            return _config["StagingPath"] ?? string.Empty;
         }
     }
 }
