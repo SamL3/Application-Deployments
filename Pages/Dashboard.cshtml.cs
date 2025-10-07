@@ -36,17 +36,21 @@ namespace ApplicationDeployment.Pages
             {
                 var serversSection = _config.GetSection("Servers");
                 if (!serversSection.Exists())
-                    return new JsonResult(Array.Empty<string>());
+                    return new JsonResult(Array.Empty<object>());
 
                 var servers = serversSection.Get<List<ServerInfo>>() ?? new List<ServerInfo>();
                 
-                // Return just hostnames to maintain compatibility with existing JavaScript
-                var serverNames = servers
+                // Return server objects with hostname and description
+                var serverData = servers
                     .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
-                    .Select(s => s.HostName)
+                    .Select(s => new { 
+                        hostname = s.HostName, 
+                        description = s.Description ?? "",
+                        userid = s.UserID ?? ""
+                    })
                     .ToList();
                 
-                return new JsonResult(serverNames);
+                return new JsonResult(serverData);
             }
             catch (Exception ex)
             {

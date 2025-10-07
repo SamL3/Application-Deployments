@@ -24,6 +24,9 @@
     .collapse-toggle { cursor:pointer; }
     .builds-list table td { padding:.25rem .5rem; }
     .app-name-trunc { max-width:180px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .server-header { min-height: 2.5rem; } /* Ensure consistent header height */
+    .server-hostname { font-weight: 600; }
+    .server-description { font-size: 0.75rem; color: #6c757d; font-weight: normal; }
 </style>
 
 <script>
@@ -57,11 +60,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function serverCardSkeleton(server) {
+        // Handle both string (legacy) and object (new) server data
+        const hostname = typeof server === 'string' ? server : server.hostname;
+        const description = typeof server === 'object' ? server.description : '';
+        
         return `
-        <div class="card shadow-sm server-card" data-server="${escapeHtml(server)}">
-            <div class="card-header d-flex justify-content-between align-items-center py-2">
-                <span class="fw-semibold small">${escapeHtml(server)}</span>
-                <div class="spinner-border spinner-sm text-secondary" role="status"></div>
+        <div class="card shadow-sm server-card" data-server="${escapeHtml(hostname)}">
+            <div class="card-header d-flex justify-content-between align-items-start py-2 server-header">
+                <div class="d-flex justify-content-between w-100">
+                    <span class="server-hostname small">${escapeHtml(hostname)}</span>
+                    ${description ? `<span class="server-description text-end">${escapeHtml(description)}</span>` : ''}
+                </div>
+                <div class="spinner-border spinner-sm text-secondary ms-2" role="status"></div>
             </div>
             <div class="card-body p-2">
                 <div class="section-title mt-0">Disk (C:)</div>
@@ -77,7 +87,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function loadServerDetails(server) {
-        const card = document.querySelector(`.server-card[data-server="${CSS.escape(server)}"]`);
+        // Handle both string (legacy) and object (new) server data
+        const hostname = typeof server === 'string' ? server : server.hostname;
+        
+        const card = document.querySelector(`.server-card[data-server="${CSS.escape(hostname)}"]`);
         if (!card) return;
         const spinner = card.querySelector('.spinner-border');
         const diskArea = card.querySelector('.disk-area');
@@ -86,7 +99,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusLine = card.querySelector('.status-line');
 
         try {
-            const resp = await fetch(`/Dashboard?handler=ServerDetails&server=${encodeURIComponent(server)}`, { cache:'no-store' });
+            const resp = await fetch(`/Dashboard?handler=ServerDetails&server=${encodeURIComponent(hostname)}`, { cache:'no-store' });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
 
