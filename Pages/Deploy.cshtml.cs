@@ -14,6 +14,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Net.NetworkInformation; // add
 
 namespace ApplicationDeployment.Pages
 {
@@ -67,6 +68,7 @@ namespace ApplicationDeployment.Pages
         }
 
         [BindProperty] public List<SelectListItem> Servers { get; set; } = new();
+        [BindProperty] public Dictionary<string,bool> ServerAccessibility { get; set; } = new();
         [BindProperty] public List<ServerInfo> ServerList { get; set; } = new();
         [BindProperty] public string[] SelectedServers { get; set; } = Array.Empty<string>();
 
@@ -79,7 +81,14 @@ namespace ApplicationDeployment.Pages
         {
             // Load servers from appconfig.json
             var serversSection = _config.GetSection("Servers");
-            ServerList = serversSection.Get<List<ServerInfo>>() ?? new List<ServerInfo>();
+            var serversConfig = serversSection.Get<List<ServerInfo>>() ?? new();
+            ServerList = serversConfig;
+
+            var root = _config["CSTApps"];
+            foreach (var s in ServerList.Where(s => !string.IsNullOrWhiteSpace(s.HostName)))
+            {
+                ServerAccessibility[s.HostName] = IsServerAccessible(s.HostName, root);
+            }
 
             // Load environments from appconfig.json (JSON array of strings)
             var envs = _config.GetSection("Environments").Get<string[]>() ?? Array.Empty<string>();
@@ -554,6 +563,34 @@ namespace ApplicationDeployment.Pages
         {
             // Show the configured staging root path used to find builds
             return _config["StagingPath"] ?? string.Empty;
+        }
+
+        private bool IsServerAccessible(string host, string? root)
+        {
+            if (string.IsNullOrWhiteSpace(host)) return false;
+            if (!QuickPing(host)) return false;
+            if (!string.IsNullOrWhiteSpace(root))
+            {
+                try
+                {
+                    var unc = $@"\\{host}\C$\{root}";
+                    if (Directory.Exists(unc)) return true;
+                }
+                catch { return false; }
+                return false;
+            }
+            return true;
+        }
+
+        private bool QuickPing(string host)
+        {
+            try
+            {
+                using var p = new Ping();
+                var r = p.Send(host, 500);
+                return r != null && r.Status == IPStatus.Success;
+            }
+            catch { return false; }
         }
     }
 }

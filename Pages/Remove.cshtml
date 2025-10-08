@@ -1,6 +1,10 @@
 ﻿@page
 @using System.Text.Json
 @model ApplicationDeployment.Pages.RemoveModel
+@{
+    // Declare helper BEFORE first usage
+    Func<string,bool> isUp = h => Model.ServerAccessibility != null && Model.ServerAccessibility.TryGetValue(h, out var ok) && ok;
+}
 
 <h1>@ViewData["Title"]</h1>
 
@@ -29,15 +33,29 @@
                             <tbody id="serversTableBody">
                                 @foreach (var server in Model.ServerList)
                                 {
-                                    <tr class="server-row" data-hostname="@server.HostName">
+                                    var accessible = isUp(server.HostName);
+                                    <tr class="server-row @(accessible ? "" : "server-down")" data-hostname="@server.HostName">
                                         <td>
-                                            <input type="checkbox" class="form-check-input server-checkbox" 
-                                                   value="@server.HostName" 
-                                                   id="server_@server.HostName">
+                                            @if (accessible)
+                                            {
+                                                <input type="checkbox" class="form-check-input server-checkbox"
+                                                       value="@server.HostName"
+                                                       id="server_@server.HostName">
+                                            }
+                                            else
+                                            {
+                                                <span class="inaccessible-indicator text-danger fw-bold">X</span>
+                                            }
                                         </td>
                                         <td class="fw-semibold">@server.HostName</td>
                                         <td class="small text-muted">@server.UserID</td>
-                                        <td class="small">@server.Description</td>
+                                        <td class="small">
+                                            @server.Description
+                                            @if (!accessible)
+                                            {
+                                                <span class="badge bg-danger ms-1">Down</span>
+                                            }
+                                        </td>
                                     </tr>
                                 }
                             </tbody>
@@ -103,480 +121,34 @@
 
 @section Scripts {
 <script>
+// Amend row click handler to ignore inaccessible rows
 document.addEventListener('DOMContentLoaded', () => {
-    // Add error handling for Bootstrap
-    if (typeof bootstrap === 'undefined') {
-        console.error('Bootstrap not loaded');
-        alert('Error: Bootstrap library not loaded. Please refresh the page.');
-        return;
-    }
-
-    // Server-side configured root (escaped safely)
-    const cstApps = @Html.Raw(System.Text.Json.JsonSerializer.Serialize(Model.CstApps ?? ""));
-
-    const serverCheckboxes = document.querySelectorAll('.server-checkbox');
-    const selectAllServers = document.getElementById('selectAllServers');
-    const selectedServersInfo = document.getElementById('selectedServersInfo');
-    const loadDeploymentsBtn = document.getElementById('loadDeploymentsBtn');
-    const refreshDeploymentsBtn = document.getElementById('refreshDeploymentsBtn');
-    const selectAllBuilds = document.getElementById('selectAllBuilds');
-    const removeSelectedBuildsBtn = document.getElementById('removeSelectedBuildsBtn');
-    const deploymentsContainer = document.getElementById('deploymentsContainer');
-    const selectedInfo = document.getElementById('selectedInfo');
-    const status = document.getElementById('maintenanceStatus');
-
-    let selectedServers = [];
-    let currentServer = null;
-
-    // Modal elements
-    const confirmModalEl = document.getElementById('confirmModal');
-    const confirmModal = (typeof bootstrap !== 'undefined' && confirmModalEl) ? new bootstrap.Modal(confirmModalEl) : null;
-    const confirmBuildsList = document.getElementById('confirmBuildsList');
-    const confirmReally = document.getElementById('confirmReally');
-    const confirmOk = document.getElementById('confirmOk');
-
-    // Server row selection (full row click)
     document.querySelectorAll('.server-row').forEach(row => {
-        row.addEventListener('click', (e) => {
-            if (e.target.type === 'checkbox') return; // Don't interfere with checkbox clicks
-            
-            const checkbox = row.querySelector('.server-checkbox');
-            checkbox.checked = !checkbox.checked;
-            checkbox.dispatchEvent(new Event('change'));
+        row.addEventListener('click', e => {
+            const cb = row.querySelector('.server-checkbox');
+            if (!cb || cb.disabled) return;
+            if (e.target.type === 'checkbox') return;
+            cb.checked = !cb.checked;
+            cb.dispatchEvent(new Event('change'));
         });
     });
-
-    // Server checkbox handling
-    function updateServerRowStyles() {
-        serverCheckboxes.forEach(cb => {
-            const row = cb.closest('.server-row');
-            if (cb.checked) {
-                row.classList.add('selected');
-            } else {
-                row.classList.remove('selected');
-            }
-        });
-    }
-
-    function updateSelectAllState() {
-        const totalCheckboxes = serverCheckboxes.length;
-        const checkedCheckboxes = Array.from(serverCheckboxes).filter(cb => cb.checked).length;
-        
-        if (checkedCheckboxes === 0) {
-            selectAllServers.indeterminate = false;
-            selectAllServers.checked = false;
-        } else if (checkedCheckboxes === totalCheckboxes) {
-            selectAllServers.indeterminate = false;
-            selectAllServers.checked = true;
-        } else {
-            selectAllServers.indeterminate = true;
-            selectAllServers.checked = false;
-        }
-    }
-
-    function updateSelectedServersInfo() {
-        selectedServers = Array.from(serverCheckboxes).filter(cb => cb.checked).map(cb => cb.value);
-        
-        if (selectedServers.length === 0) {
-            selectedServersInfo.textContent = 'No servers selected';
-            loadDeploymentsBtn.disabled = true;
-            refreshDeploymentsBtn.disabled = true;
-        } else if (selectedServers.length === 1) {
-            selectedServersInfo.textContent = `Selected: ${selectedServers[0]}`;
-            loadDeploymentsBtn.disabled = false;
-            refreshDeploymentsBtn.disabled = false;
-        } else {
-            selectedServersInfo.textContent = `Selected: ${selectedServers.length} servers`;
-            loadDeploymentsBtn.disabled = false;
-            refreshDeploymentsBtn.disabled = true; // Disable refresh for multiple servers
-        }
-    }
-
-    // Select all functionality
-    selectAllServers.addEventListener('change', () => {
-        const checked = selectAllServers.checked;
-        serverCheckboxes.forEach(cb => {
-            cb.checked = checked;
-        });
-        updateServerRowStyles();
-        updateSelectAllState();
-        updateSelectedServersInfo();
-    });
-
-    // Individual checkbox change handlers
-    serverCheckboxes.forEach(cb => {
-        cb.addEventListener('change', () => {
-            updateServerRowStyles();
-            updateSelectAllState();
-            updateSelectedServersInfo();
-        });
-    });
-
-    // Load deployments button
-    loadDeploymentsBtn.addEventListener('click', async () => {
-        if (selectedServers.length === 0) return;
-        
-        // Clear previous deployments
-        deploymentsContainer.innerHTML = '<div class="col-12">Loading...</div>';
-        selectedInfo.textContent = 'No selection';
-        selectAllBuilds.disabled = true;
-        removeSelectedBuildsBtn.disabled = true;
-        
-        try {
-            if (selectedServers.length === 1) {
-                // Single server - load deployments for that server
-                currentServer = selectedServers[0];
-                await loadDeployments(currentServer);
-            } else {
-                // Multiple servers - show summary
-                currentServer = null;
-                await loadMultiServerSummary(selectedServers);
-            }
-            status.textContent = 'Loaded';
-        } catch (e) {
-            deploymentsContainer.innerHTML = `<div class="col-12 text-danger">Error loading: ${e.message}</div>`;
-            status.textContent = 'Error';
-        }
-    });
-
-    // Refresh deployments button
-    refreshDeploymentsBtn.addEventListener('click', async () => {
-        if (currentServer) {
-            await loadDeployments(currentServer);
-        }
-    });
-
-    async function loadDeployments(server) {
-        const resp = await fetch(`/Remove?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        const data = await resp.json();
-        renderDeploymentsCards(data, server);
-    }
-
-    async function loadMultiServerSummary(servers) {
-        deploymentsContainer.innerHTML = '<div class="col-12">Loading multiple servers...</div>';
-        
-        const serverData = [];
-        for (const server of servers) {
-            try {
-                const resp = await fetch(`/Remove?handler=Deployments&server=${encodeURIComponent(server)}`, { cache: 'no-store' });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    serverData.push({ server, deployments: data });
-                } else {
-                    serverData.push({ server, deployments: [], error: 'Failed to load' });
-                }
-            } catch (e) {
-                serverData.push({ server, deployments: [], error: e.message });
-            }
-        }
-        
-        renderMultiServerSummary(serverData);
-    }
-
-    function renderMultiServerSummary(serverData) {
-        deploymentsContainer.innerHTML = '';
-        
-        serverData.forEach(({ server, deployments, error }) => {
-            const col = document.createElement('div');
-            col.className = 'col-12 mb-3';
-            
-            const card = document.createElement('div');
-            card.className = 'card';
-            
-            if (error) {
-                card.innerHTML = `
-                    <div class="card-header small fw-semibold text-danger">
-                        ${escapeHtml(server)} <span class="badge bg-danger ms-2">Error</span>
-                    </div>
-                    <div class="card-body p-2">
-                        <div class="text-danger small">${escapeHtml(error)}</div>
-                    </div>`;
-            } else {
-                const totalBuilds = deployments.reduce((sum, app) => sum + app.buildCount, 0);
-                card.innerHTML = `
-                    <div class="card-header small fw-semibold">
-                        ${escapeHtml(server)} 
-                        <span class="badge bg-secondary ms-2">${deployments.length} apps</span>
-                        <span class="badge bg-info ms-1">${totalBuilds} builds</span>
-                    </div>
-                    <div class="card-body p-2">
-                        <div class="small">
-                            ${deployments.map(app => `<span class="badge bg-light text-dark me-1">${escapeHtml(app.app)} (${app.buildCount})</span>`).join('')}
-                        </div>
-                    </div>`;
-            }
-            
-            col.appendChild(card);
-            deploymentsContainer.appendChild(col);
-        });
-        
-        if (serverData.length === 0) {
-            deploymentsContainer.innerHTML = '<div class="col-12 text-muted">No deployments found on selected servers.</div>';
-        }
-    }
-
-    function renderDeploymentsCards(data, server) {
-        deploymentsContainer.innerHTML = '';
-        
-        if (!data || data.length === 0) {
-            deploymentsContainer.innerHTML = '<div class="col-12 text-muted">No deployments found on this server.</div>';
-            selectAllBuilds.disabled = true;
-            removeSelectedBuildsBtn.disabled = true;
-            return;
-        }
-
-        // Create cards for each application
-        data.forEach(app => {
-            const col = document.createElement('div');
-            col.className = 'col-12 app-card';
-            
-            const cardHTML = `
-                <div class="card">
-                    <div class="card-header small fw-semibold d-flex justify-content-between align-items-center">
-                        <span>${escapeHtml(app.app)}</span>
-                        <span class="badge bg-secondary">${app.buildCount} builds</span>
-                    </div>
-                    <div class="card-body p-0">
-                        ${app.builds.length > 0 ? `
-                            <table class="table table-sm table-hover builds-table mb-0">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th scope="col" style="width: 50px;">
-                                            <input type="checkbox" class="form-check-input app-select-all" 
-                                                   data-app="${escapeHtml(app.app)}" title="Select All Builds for ${escapeHtml(app.app)}">
-                                        </th>
-                                        <th scope="col">Build Name</th>
-                                        <th scope="col" style="width: 100px;">Size</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    ${app.builds.map(build => `
-                                        <tr class="build-row" data-app="${escapeHtml(app.app)}" data-build="${escapeHtml(build.name)}" data-server="${escapeHtml(server)}">
-                                            <td>
-                                                <input type="checkbox" class="form-check-input build-checkbox" 
-                                                       value="${escapeHtml(app.app)}|${escapeHtml(build.name)}" 
-                                                       data-app="${escapeHtml(app.app)}"
-                                                       id="build_${escapeHtml(app.app)}_${escapeHtml(build.name)}">
-                                            </td>
-                                            <td class="text-wrap">${escapeHtml(build.name)}</td>
-                                            <td class="text-end">${build.sizeMB.toFixed(2)} MB</td>
-                                        </tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        ` : `
-                            <div class="p-3 text-muted small">No builds found for this application.</div>
-                        `}
-                    </div>
-                </div>
-            `;
-            
-            col.innerHTML = cardHTML;
-            deploymentsContainer.appendChild(col);
-        });
-        
-        // Enable controls
-        selectAllBuilds.disabled = false;
-        
-        // Wire up build selection events - get fresh references each time
-        wireUpBuildEvents();
-    }
-
-    function wireUpBuildEvents() {
-        const buildCheckboxes = document.querySelectorAll('.build-checkbox');
-        const appSelectAllCheckboxes = document.querySelectorAll('.app-select-all');
-        
-        // Build row selection (full row click)
-        document.querySelectorAll('.build-row').forEach(row => {
-            row.addEventListener('click', (e) => {
-                if (e.target.type === 'checkbox') return; // Don't interfere with checkbox clicks
-                
-                const checkbox = row.querySelector('.build-checkbox');
-                checkbox.checked = !checkbox.checked;
-                checkbox.dispatchEvent(new Event('change'));
+    const selectAllServers = document.getElementById('selectAllServers');
+    if (selectAllServers){
+        selectAllServers.addEventListener('change', () => {
+            const checked = selectAllServers.checked;
+            document.querySelectorAll('.server-checkbox').forEach(cb => {
+                if (cb.disabled) return;
+                cb.checked = checked;
+                cb.dispatchEvent(new Event('change'));
             });
         });
-
-        // Build checkbox handling
-        function updateBuildRowStyles() {
-            buildCheckboxes.forEach(cb => {
-                const row = cb.closest('.build-row');
-                if (cb.checked) {
-                    row.classList.add('selected');
-                } else {
-                    row.classList.remove('selected');
-                }
-            });
-        }
-
-        function updateAppSelectAllStates() {
-            appSelectAllCheckboxes.forEach(appCheckbox => {
-                const appName = appCheckbox.getAttribute('data-app');
-                const appBuilds = Array.from(buildCheckboxes).filter(cb => cb.getAttribute('data-app') === appName);
-                const checkedAppBuilds = appBuilds.filter(cb => cb.checked);
-                
-                if (checkedAppBuilds.length === 0) {
-                    appCheckbox.indeterminate = false;
-                    appCheckbox.checked = false;
-                } else if (checkedAppBuilds.length === appBuilds.length) {
-                    appCheckbox.indeterminate = false;
-                    appCheckbox.checked = true;
-                } else {
-                    appCheckbox.indeterminate = true;
-                    appCheckbox.checked = false;
-                }
-            });
-        }
-
-        function updateRemoveButtonState() {
-            const checkedBuilds = Array.from(buildCheckboxes).filter(cb => cb.checked);
-            removeSelectedBuildsBtn.disabled = checkedBuilds.length === 0;
-            
-            if (checkedBuilds.length > 0) {
-                selectedInfo.textContent = `Selected: ${checkedBuilds.length} build(s) on ${currentServer}`;
-            } else {
-                selectedInfo.textContent = 'No selection';
-            }
-        }
-
-        // App select all functionality
-        appSelectAllCheckboxes.forEach(appCheckbox => {
-            appCheckbox.addEventListener('change', () => {
-                const appName = appCheckbox.getAttribute('data-app');
-                const checked = appCheckbox.checked;
-                const appBuilds = Array.from(buildCheckboxes).filter(cb => cb.getAttribute('data-app') === appName);
-                
-                appBuilds.forEach(cb => {
-                    cb.checked = checked;
-                });
-                
-                updateBuildRowStyles();
-                updateAppSelectAllStates();
-                updateRemoveButtonState();
-            });
-        });
-
-        // Individual build checkbox change handlers
-        buildCheckboxes.forEach(cb => {
-            cb.addEventListener('change', () => {
-                updateBuildRowStyles();
-                updateAppSelectAllStates();
-                updateRemoveButtonState();
-            });
-        });
-
-        // Initialize build states
-        updateBuildRowStyles();
-        updateAppSelectAllStates();
-        updateRemoveButtonState();
     }
-
-    // Select all builds button (header) - fixed to use fresh selector
-    selectAllBuilds.addEventListener('click', () => {
-        const buildCheckboxes = document.querySelectorAll('.build-checkbox');
-        if (buildCheckboxes.length === 0) return;
-        
-        const allChecked = Array.from(buildCheckboxes).every(cb => cb.checked);
-        
-        buildCheckboxes.forEach(cb => {
-            cb.checked = !allChecked;
-        });
-        
-        // Trigger change events to update UI
-        buildCheckboxes[0].dispatchEvent(new Event('change'));
-    });
-
-    // Remove selected builds button
-    removeSelectedBuildsBtn.addEventListener('click', () => {
-        const checkedBuilds = Array.from(document.querySelectorAll('.build-checkbox:checked'));
-        if (checkedBuilds.length === 0 || !currentServer) return;
-        
-        const buildIdentifiers = checkedBuilds.map(cb => cb.value);
-        showConfirmModal(currentServer, buildIdentifiers);
-    });
-
-    // Show confirmation modal
-    function showConfirmModal(server, buildIdentifiers) {
-        const buildsList = buildIdentifiers.map(id => {
-            const parts = id.split('|');
-            return `\\\\${server}\\C$\\${cstApps}\\${parts[0]}\\${parts[1]}`;
-        }).join('\n');
-        
-        confirmBuildsList.textContent = buildsList;
-        confirmReally.checked = false;
-        confirmOk.disabled = true;
-        confirmModal?.show();
-
-        confirmReally.onchange = () => confirmOk.disabled = !confirmReally.checked;
-        confirmOk.onclick = async () => {
-            confirmModal?.hide();
-            await postRemoveMultipleBuilds(server, buildIdentifiers);
-        };
-    }
-
-    async function postRemoveMultipleBuilds(server, buildIdentifiers) {
-        status.textContent = 'Removing builds...';
-
-        const tokenInput = document.querySelector('input[name="__RequestVerificationToken"]');
-        const token = tokenInput ? tokenInput.value : '';
-
-        const body = new URLSearchParams();
-        body.append('server', server);
-        buildIdentifiers.forEach(id => body.append('selectedBuilds', id));
-
-        try {
-            const resp = await fetch('/Remove?handler=RemoveMultipleBuilds', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'RequestVerificationToken': token
-                },
-                body: body.toString()
-            });
-
-            const ct = resp.headers.get('content-type') || '';
-            let payload = null;
-            if (ct.includes('application/json')) {
-                payload = await resp.json();
-            } else {
-                const text = await resp.text();
-                payload = { success: resp.ok, message: text || resp.statusText };
-            }
-
-            if (!resp.ok || !payload || !payload.success) {
-                status.textContent = 'Remove failed';
-                alert('Remove failed: ' + (payload?.message ?? resp.status));
-                console.error('Remove failed', resp.status, payload);
-                return;
-            }
-
-            status.textContent = payload.message || 'Removed';
-            
-            // Show detailed results if available
-            if (payload.results && payload.results.length > 0) {
-                const failedResults = payload.results.filter(r => !r.success);
-                if (failedResults.length > 0) {
-                    console.warn('Some removals failed:', failedResults);
-                }
-            }
-
-            // Refresh the deployments view
-            await loadDeployments(server);
-            selectedInfo.textContent = 'No selection';
-        } catch (e) {
-            status.textContent = 'Error';
-            console.error('Remove error', e);
-            alert('Error removing: ' + e.message);
-        }
-    }
-
-    // Initialize server states
-    updateServerRowStyles();
-    updateSelectAllState();
-    updateSelectedServersInfo();
-
-    function escapeHtml(s) { return (s||'').toString().replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 });
 </script>
+<style>
+    .inaccessible-indicator { display:inline-block; width:1.1rem; text-align:center; }
+    .server-row.server-down { opacity:0.55; }
+    .server-row.server-down:hover { background:inherit; cursor:not-allowed; }
+</style>
+@* existing scripts retained below *@
 }

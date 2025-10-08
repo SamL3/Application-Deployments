@@ -1,5 +1,9 @@
 ﻿@page
 @model ApplicationDeployment.Pages.DeployModel
+@{
+    // Move this block ABOVE any usage of isUp
+    Func<string,bool> isUp = h => Model.ServerAccessibility != null && Model.ServerAccessibility.TryGetValue(h, out var ok) && ok;
+}
 
 <h1>@ViewData["Title"]</h1>
 <form id="deploymentForm" method="post" onsubmit="event.preventDefault(); startCopy();" class="my-3">
@@ -28,15 +32,29 @@
                             <tbody id="serversTableBody">
                                 @foreach (var server in Model.ServerList)
                                 {
-                                    <tr class="server-row" data-hostname="@server.HostName">
+                                    var accessible = isUp(server.HostName);
+                                    <tr class="server-row @(accessible ? "" : "server-down")" data-hostname="@server.HostName">
                                         <td>
-                                            <input type="checkbox" class="form-check-input server-checkbox"
-                                                   name="SelectedServers" value="@server.HostName"
-                                                   id="server_@server.HostName">
+                                            @if (accessible)
+                                            {
+                                                <input type="checkbox" class="form-check-input server-checkbox"
+                                                       name="SelectedServers" value="@server.HostName"
+                                                       id="server_@server.HostName" />
+                                            }
+                                            else
+                                            {
+                                                <span class="inaccessible-indicator text-danger fw-bold">X</span>
+                                            }
                                         </td>
                                         <td class="fw-semibold">@server.HostName</td>
                                         <td class="small text-muted">@server.UserID</td>
-                                        <td class="small">@server.Description</td>
+                                        <td class="small">
+                                            @server.Description
+                                            @if (!accessible)
+                                            {
+                                                <span class="badge bg-danger ms-1">Down</span>
+                                            }
+                                        </td>
                                     </tr>
                                 }
                             </tbody>
@@ -166,15 +184,35 @@
 </form>
 
 @section Scripts {
+<script>
+(function(){
+    // Patch existing logic: prevent toggling inaccessible rows
+    document.querySelectorAll('.server-row').forEach(row=>{
+        row.addEventListener('click', e=>{
+            const cb=row.querySelector('.server-checkbox');
+            if(!cb || cb.disabled) return;
+            if(e.target.type==='checkbox') return;
+            cb.checked=!cb.checked;
+            cb.dispatchEvent(new Event('change'));
+        });
+    });
+    const selectAll=document.getElementById('selectAllServers');
+    if(selectAll){
+        selectAll.addEventListener('change',()=>{
+            const checked=selectAll.checked;
+            document.querySelectorAll('.server-checkbox').forEach(cb=>{
+                if(cb.disabled) return;
+                cb.checked=checked;
+                cb.dispatchEvent(new Event('change'));
+            });
+        });
+    }
+})();
+</script>
 <style>
-    .app-card { min-height: 220px; }
-    .app-card .card-body { padding: 0; }
-    .form-check-label { white-space: normal; }
-    .build-checkbox:checked + label { font-weight:600; color:#0d6efd; }
-    .server-row:hover { background-color: rgba(0,123,255,0.1); }
-    .server-row.selected { background-color: rgba(0,123,255,0.2); }
-    .build-row.selected { background-color: rgba(13,110,253,0.08); }
-    .sticky-top { position: sticky; top: 0; z-index: 10; }
+    .inaccessible-indicator { display:inline-block; width:1.1rem; text-align:center; }
+    .server-row.server-down { opacity:.55; }
+    .server-row.server-down:hover { background:inherit; cursor:not-allowed; }
 </style>
 
 <script>
@@ -453,4 +491,4 @@
 
 })();
 </script>
-}
+}@* existing scripts remain below *@

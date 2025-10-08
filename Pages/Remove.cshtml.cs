@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.NetworkInformation;
 using System.Text.Json;
 
 namespace ApplicationDeployment.Pages
@@ -27,6 +28,7 @@ namespace ApplicationDeployment.Pages
 
         public List<SelectListItem> Servers { get; set; } = new();
         public List<ServerInfo> ServerList { get; set; } = new();
+        public Dictionary<string, bool> ServerAccessibility { get; set; } = new();
 
         public string CstApps => _config["CSTApps"] ?? string.Empty;
 
@@ -35,10 +37,45 @@ namespace ApplicationDeployment.Pages
             var serverListConfig = _config.GetSection("Servers").Get<List<ServerInfo>>();
             ServerList = serverListConfig ?? new List<ServerInfo>();
 
+            var root = _config["CSTApps"];
+            foreach (var s in ServerList.Where(x => !string.IsNullOrWhiteSpace(x.HostName)))
+            {
+                var ok = IsServerAccessible(s.HostName, root);
+                ServerAccessibility[s.HostName] = ok;
+            }
+
             Servers = ServerList
                 .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
                 .Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName })
                 .ToList();
+        }
+
+        private bool IsServerAccessible(string host, string? root)
+        {
+            if (string.IsNullOrWhiteSpace(host)) return false;
+            if (!QuickPing(host)) return false;
+            if (!string.IsNullOrWhiteSpace(root))
+            {
+                try
+                {
+                    var unc = $@"\\{host}\C$\{root}";
+                    if (Directory.Exists(unc)) return true;
+                }
+                catch { return false; }
+                return false;
+            }
+            return true;
+        }
+
+        private bool QuickPing(string host)
+        {
+            try
+            {
+                using var p = new Ping();
+                var r = p.Send(host, 500);
+                return r != null && r.Status == IPStatus.Success;
+            }
+            catch { return false; }
         }
 
         // GET: /Remove?handler=Deployments&server=NAME
