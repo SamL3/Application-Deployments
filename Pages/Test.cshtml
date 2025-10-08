@@ -43,7 +43,7 @@ else
                         <div class="row g-2 mb-2 small param-block">
                             <div class="col-12">
                                 <div class="input-group input-group-sm">
-                                    <span class="input-group-text">Script</span>
+                                    <span class="input-group-text">Docker Cmd</span>
                                     <input class="form-control script-path" value="@t.ScriptPath" readonly />
                                 </div>
                             </div>
@@ -84,8 +84,6 @@ else
     </div>
 }
 
-<!-- Find modal unchanged -->
-
 @section Scripts {
 <style>
     .test-card { margin-bottom: 1rem; }
@@ -102,110 +100,51 @@ else
     }
     .output-box.wrap-on { white-space: pre-wrap; }
     .output-box.wrap-off { white-space: pre; }
-    .ansi-output .ansi-red { color: #f14c4c; }
-    .ansi-output .ansi-green { color: #23d18b; }
-    .ansi-output .ansi-yellow { color: #f5f543; }
-    .ansi-output .ansi-blue { color: #3b8eea; }
-    .ansi-output .ansi-magenta { color: #d670d6; }
-    .ansi-output .ansi-cyan { color: #29b8db; }
-    .ansi-output .ansi-white { color: #e5e5e5; }
-    .ansi-output .ansi-bright-black { color: #666666; }
-    .cmd-preview { background: #f8f9fa; padding: 0.25rem 0.5rem; border-radius: 0.25rem; }
-    .output-toolbar { margin-bottom: 0.5rem; }
-    .output-toolbar .btn { margin-right: 0.25rem; }
-    .param-row { margin-bottom: 0.5rem; }
-    .find-modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
-                  background: white; border: 1px solid #ccc; border-radius: 0.5rem; padding: 1rem; z-index: 1000; }
-    .find-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
-                    background: rgba(0,0,0,0.5); z-index: 999; }
+    .cmd-preview { 
+        background: #f8f9fa; 
+        padding: 0.25rem 0.5rem; 
+        border-radius: 0.25rem; 
+        color: #198754; /* Bootstrap success green */
+        font-weight: 600;
+    }
+    .run-btn.busy {
+        pointer-events: none;
+        opacity: .65;
+    }
 </style>
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
-    
-    // Global wrap toggle
-    const globalWrapToggle = document.getElementById('wrapToggle');
-    globalWrapToggle.addEventListener('change', () => {
-        document.querySelectorAll('.output-box').forEach(box => {
-            box.classList.toggle('wrap-on', globalWrapToggle.checked);
-            box.classList.toggle('wrap-off', !globalWrapToggle.checked);
-        });
-    });
+    const tokenEl = document.querySelector('input[name="__RequestVerificationToken"]');
+    const token = tokenEl ? tokenEl.value : '';
 
-    // Refresh all button
-    document.getElementById('refreshAllBtn').addEventListener('click', () => {
-        window.location.reload();
-    });
-
-    // Event delegation for all test card buttons
-    document.addEventListener('click', async (e) => {
-        const testCard = e.target.closest('.test-card');
-        if (!testCard) return;
-
-        const testId = testCard.dataset.testId;
-        
-        if (e.target.classList.contains('run-btn')) {
-            await runTest(testCard, testId);
-        }
-        else if (e.target.classList.contains('save-btn')) {
-            await saveUserConfig(testCard, testId);
-        }
-        else if (e.target.classList.contains('clear-btn')) {
-            clearOutput(testCard);
-        }
-        else if (e.target.classList.contains('copy-btn')) {
-            copyOutput(testCard);
-        }
-        else if (e.target.classList.contains('wrap-toggle-btn')) {
-            toggleWrap(testCard);
-        }
-        else if (e.target.classList.contains('find-btn')) {
-            openFindModal(testCard);
-        }
-        else if (e.target.classList.contains('scroll-lock-btn')) {
-            toggleScrollLock(testCard);
-        }
-    });
-
-    // Parameter input change detection
-    document.addEventListener('input', (e) => {
-        if (e.target.classList.contains('param-value')) {
-            const testCard = e.target.closest('.test-card');
-            const saveBtn = testCard.querySelector('.save-btn');
-            saveBtn.disabled = false;
-            saveBtn.textContent = 'Save*';
-            updateCommandPreview(testCard);
-        }
-    });
-
-    // Initialize command previews
-    document.querySelectorAll('.test-card').forEach(card => {
-        updateCommandPreview(card);
-    });
+    function getProp(obj, name) {
+        return obj[name] ?? obj[name.charAt(0).toLowerCase() + name.slice(1)];
+    }
 
     async function runTest(testCard, testId) {
         const runBtn = testCard.querySelector('.run-btn');
         const outputBox = testCard.querySelector('.output-box');
         const statusLine = testCard.querySelector('.status-line');
         const cmdPreview = testCard.querySelector('.cmd-preview');
-        
-        // Disable button and show running state
+
+        if (!runBtn) return;
+
+        // Guard to always re-enable
+        let completed = false;
+
         runBtn.disabled = true;
+        runBtn.classList.add('busy');
         runBtn.textContent = 'Running...';
         statusLine.textContent = 'Running...';
-        
-        // Clear previous output
+        statusLine.className = 'small text-info mt-2';
         outputBox.textContent = '';
-        
-        // Collect parameters
+
         const parameters = [];
         testCard.querySelectorAll('.param-row').forEach(row => {
-            const name = row.querySelector('.param-name').value;
-            const value = row.querySelector('.param-value').value;
-            if (name) {
-                parameters.push({ Name: name, Value: value });
-            }
+            const name = row.querySelector('.param-name')?.value;
+            const value = row.querySelector('.param-value')?.value;
+            if (name) parameters.push({ Name: name, Value: value });
         });
 
         try {
@@ -215,69 +154,119 @@ document.addEventListener('DOMContentLoaded', () => {
                     'Content-Type': 'application/json',
                     'RequestVerificationToken': token
                 },
-                body: JSON.stringify({
-                    Id: testId,
-                    Parameters: parameters
-                })
+                body: JSON.stringify({ Id: testId, Parameters: parameters })
             });
 
-            const result = await response.json();
-            
-            // Update command preview
-            cmdPreview.textContent = result.Command || '(unknown)';
-            
-            // Display output
+            const text = await response.text();
+            let result;
+            try {
+                result = text ? JSON.parse(text) : {};
+            } catch (parseErr) {
+                result = { message: 'Invalid JSON response', raw: text, success: false };
+            }
+
+            console.debug('RunTest result:', result);
+
+            const command = getProp(result, 'Command');
+            const outputProp = getProp(result, 'Output');
+            const errorProp = getProp(result, 'Error');
+            const success = getProp(result, 'Success');
+            const exitCode = getProp(result, 'ExitCode');
+            const durationMs = getProp(result, 'DurationMs');
+            const message = result.message ?? result.Message;
+
+            cmdPreview.textContent = command || (message ? '(error)' : '(unknown)');
+
             let output = '';
-            if (result.Output) {
-                output += result.Output;
-            }
-            if (result.Error) {
-                output += (output ? '\n' : '') + '=== STDERR ===\n' + result.Error;
-            }
-            
+            if (outputProp) output += outputProp;
+            if (errorProp) output += (output ? '\n' : '') + '=== STDERR ===\n' + errorProp;
+            if (!output && message) output = message;
             outputBox.textContent = output || '(no output)';
-            
-            // Scroll to bottom if not locked
-            if (outputBox.dataset.autoscroll === 'true') {
+
+            if (outputBox.dataset.autoscroll === 'true')
                 outputBox.scrollTop = outputBox.scrollHeight;
-            }
-            
-            // Update status
-            const duration = result.DurationMs ? ` (${result.DurationMs.toFixed(0)}ms)` : '';
-            if (result.Success) {
-                statusLine.textContent = `Completed successfully. Exit code: ${result.ExitCode}${duration}`;
+
+            const duration = durationMs ? ` (${Number(durationMs).toFixed(0)}ms)` : '';
+            if (success) {
+                statusLine.textContent = `Completed successfully. Exit code: ${exitCode}${duration}`;
                 statusLine.className = 'small text-success mt-2';
             } else {
-                statusLine.textContent = `Failed. Exit code: ${result.ExitCode}${duration}`;
+                statusLine.textContent = `Failed. Exit code: ${exitCode ?? '-'}${duration}`;
                 statusLine.className = 'small text-danger mt-2';
             }
-            
-        } catch (error) {
-            outputBox.textContent = `Error: ${error.message}`;
+        } catch (err) {
+            console.error('Run error', err);
+            cmdPreview.textContent = '(error)';
+            outputBox.textContent = `Error: ${err.message}`;
             statusLine.textContent = 'Request failed';
             statusLine.className = 'small text-danger mt-2';
         } finally {
+            completed = true;
             runBtn.disabled = false;
+            runBtn.classList.remove('busy');
             runBtn.textContent = 'Run';
         }
+
+        // Safety timeout in case finally is skipped (edge cases)
+        setTimeout(() => {
+            if (!completed) {
+                runBtn.disabled = false;
+                runBtn.classList.remove('busy');
+                runBtn.textContent = 'Run';
+            }
+        }, 5000);
     }
+
+    document.getElementById('refreshAllBtn')?.addEventListener('click', () => {
+        window.location.reload();
+    });
+
+    document.addEventListener('click', async (e) => {
+        const testCard = e.target.closest('.test-card');
+        if (!testCard) return;
+        const testId = testCard.dataset.testId;
+        if (e.target.classList.contains('run-btn')) {
+            if (!e.target.disabled) await runTest(testCard, testId);
+        } else if (e.target.classList.contains('save-btn')) {
+            await saveUserConfig(testCard, testId);
+        } else if (e.target.classList.contains('clear-btn')) {
+            clearOutput(testCard);
+        } else if (e.target.classList.contains('copy-btn')) {
+            copyOutput(testCard);
+        } else if (e.target.classList.contains('wrap-toggle-btn')) {
+            toggleWrap(testCard);
+        } else if (e.target.classList.contains('find-btn')) {
+            openFindModal(testCard);
+        } else if (e.target.classList.contains('scroll-lock-btn')) {
+            toggleScrollLock(testCard);
+        }
+    });
+
+    document.addEventListener('input', (e) => {
+        if (e.target.classList.contains('param-value')) {
+            const testCard = e.target.closest('.test-card');
+            const saveBtn = testCard.querySelector('.save-btn');
+            if (saveBtn) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save*';
+            }
+            updateCommandPreview(testCard);
+        }
+    });
+
+    document.querySelectorAll('.test-card').forEach(card => updateCommandPreview(card));
 
     async function saveUserConfig(testCard, testId) {
         const saveBtn = testCard.querySelector('.save-btn');
-        
-        // Collect parameters
+        if (!saveBtn) return;
         const parameters = [];
         testCard.querySelectorAll('.param-row').forEach(row => {
-            const name = row.querySelector('.param-name').value;
-            const value = row.querySelector('.param-value').value;
-            if (name) {
-                parameters.push({ Name: name, Value: value });
-            }
+            const name = row.querySelector('.param-name')?.value;
+            const value = row.querySelector('.param-value')?.value;
+            if (name) parameters.push({ Name: name, Value: value });
         });
-
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving...';
-
         try {
             const response = await fetch('/Test?handler=SaveUserConfig', {
                 method: 'POST',
@@ -285,14 +274,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     'Content-Type': 'application/json',
                     'RequestVerificationToken': token
                 },
-                body: JSON.stringify({
-                    Id: testId,
-                    Parameters: parameters
-                })
+                body: JSON.stringify({ Id: testId, Parameters: parameters })
             });
-
             const result = await response.json();
-            
             if (result.success) {
                 saveBtn.textContent = 'Saved';
                 saveBtn.className = 'btn btn-sm btn-success';
@@ -302,14 +286,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     saveBtn.disabled = true;
                 }, 2000);
             } else {
-                saveBtn.textContent = 'Error';
-                saveBtn.className = 'btn btn-sm btn-danger';
-                setTimeout(() => {
-                    saveBtn.textContent = 'Save';
-                    saveBtn.className = 'btn btn-sm btn-outline-success';
-                }, 2000);
+                throw new Error('Save failed');
             }
-        } catch (error) {
+        } catch {
             saveBtn.textContent = 'Error';
             saveBtn.className = 'btn btn-sm btn-danger';
             setTimeout(() => {
@@ -323,38 +302,35 @@ document.addEventListener('DOMContentLoaded', () => {
         const outputBox = testCard.querySelector('.output-box');
         const statusLine = testCard.querySelector('.status-line');
         const cmdPreview = testCard.querySelector('.cmd-preview');
-        
-        outputBox.textContent = '';
-        statusLine.textContent = 'Idle';
-        statusLine.className = 'small text-muted mt-2';
-        cmdPreview.textContent = '(idle)';
+        if (outputBox) outputBox.textContent = '';
+        if (statusLine) {
+            statusLine.textContent = 'Idle';
+            statusLine.className = 'small text-muted mt-2';
+        }
+        if (cmdPreview) cmdPreview.textContent = '(idle)';
     }
 
     function copyOutput(testCard) {
         const outputBox = testCard.querySelector('.output-box');
+        if (!outputBox) return;
         const text = outputBox.textContent;
-        
         if (navigator.clipboard) {
-            navigator.clipboard.writeText(text).then(() => {
-                showTemporaryMessage(testCard, 'Copied to clipboard');
-            });
+            navigator.clipboard.writeText(text);
         } else {
-            // Fallback for older browsers
-            const textarea = document.createElement('textarea');
-            textarea.value = text;
-            document.body.appendChild(textarea);
-            textarea.select();
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
             document.execCommand('copy');
-            document.body.removeChild(textarea);
-            showTemporaryMessage(testCard, 'Copied to clipboard');
+            document.body.removeChild(ta);
         }
     }
 
     function toggleWrap(testCard) {
         const wrapBtn = testCard.querySelector('.wrap-toggle-btn');
         const outputBox = testCard.querySelector('.output-box');
+        if (!wrapBtn || !outputBox) return;
         const isOn = wrapBtn.dataset.state === 'on';
-        
         if (isOn) {
             wrapBtn.dataset.state = 'off';
             wrapBtn.textContent = 'Wrap: Off';
@@ -371,8 +347,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function toggleScrollLock(testCard) {
         const scrollBtn = testCard.querySelector('.scroll-lock-btn');
         const outputBox = testCard.querySelector('.output-box');
+        if (!scrollBtn || !outputBox) return;
         const isLocked = scrollBtn.dataset.locked === 'true';
-        
         if (isLocked) {
             scrollBtn.dataset.locked = 'false';
             scrollBtn.textContent = 'Scroll Lock Off';
@@ -385,73 +361,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateCommandPreview(testCard) {
-        const scriptPath = testCard.querySelector('.script-path').value;
+        const scriptPath = testCard.querySelector('.script-path')?.value || '';
         const cmdPreview = testCard.querySelector('.cmd-preview');
-        
-        let command;
-        
-        // Check if this is a Docker command
-        if (scriptPath.toLowerCase().startsWith('docker ')) {
-            // For Docker commands, use the script path as-is and append parameters
-            command = scriptPath;
-            
-            testCard.querySelectorAll('.param-row').forEach(row => {
-                const name = row.querySelector('.param-name').value;
-                const value = row.querySelector('.param-value').value;
-                if (name) {
-                    command += ` -${name}`;
-                    if (value) {
-                        command += ` ${value}`;
-                    }
-                }
-            });
-        } else {
-            // For PowerShell scripts, use the original format
-            command = `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`;
-            
-            testCard.querySelectorAll('.param-row').forEach(row => {
-                const name = row.querySelector('.param-name').value;
-                const value = row.querySelector('.param-value').value;
-                if (name) {
-                    command += ` -p "${name}"`;
-                    if (value) {
-                        command += ` "${value}"`;
-                    }
-                }
-            });
-        }
-        
-        cmdPreview.textContent = command;
-    }
-
-    function showTemporaryMessage(testCard, message) {
-        const statusLine = testCard.querySelector('.status-line');
-        const originalText = statusLine.textContent;
-        const originalClass = statusLine.className;
-        
-        statusLine.textContent = message;
-        statusLine.className = 'small text-info mt-2';
-        
-        setTimeout(() => {
-            statusLine.textContent = originalText;
-            statusLine.className = originalClass;
-        }, 2000);
+        if (!cmdPreview) return;
+        let command = scriptPath;
+        testCard.querySelectorAll('.param-row').forEach(row => {
+            const name = row.querySelector('.param-name')?.value;
+            const value = row.querySelector('.param-value')?.value;
+            if (name) {
+                command += ` -${name}`;
+                if (value) command += ` ${value}`;
+            }
+        });
+        cmdPreview.textContent = command || '(idle)';
     }
 
     function openFindModal(testCard) {
-        // Simple find functionality - you can enhance this
         const searchTerm = prompt('Search in output:');
-        if (searchTerm) {
-            const outputBox = testCard.querySelector('.output-box');
-            const text = outputBox.textContent;
-            const index = text.toLowerCase().indexOf(searchTerm.toLowerCase());
-            if (index !== -1) {
-                // Simple highlight - you can make this more sophisticated
-                showTemporaryMessage(testCard, `Found "${searchTerm}" at position ${index}`);
-            } else {
-                showTemporaryMessage(testCard, `"${searchTerm}" not found`);
-            }
-        }
+        if (!searchTerm) return;
+        const outputBox = testCard.querySelector('.output-box');
+        if (!outputBox) return;
+        const text = outputBox.textContent.toLowerCase();
+        const idx = text.indexOf(searchTerm.toLowerCase());
+        alert(idx === -1 ? 'Not found' : `Found at position ${idx}`);
     }
 });
 </script>

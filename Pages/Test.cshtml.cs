@@ -69,6 +69,7 @@ namespace ApplicationDeployment.Pages
         {
             public string Id { get; set; } = string.Empty;
             public string Description { get; set; } = string.Empty;
+            // Now expected to start with: docker ...
             public string ScriptPath { get; set; } = string.Empty;
             public List<ApiParam> Parameters { get; set; } = new();
         }
@@ -101,117 +102,108 @@ namespace ApplicationDeployment.Pages
             public double DurationMs { get; set; }
         }
 
+        // Replace the whole OnPostRunAsync with this version to always return a uniform RunResult
         public async Task<IActionResult> OnPostRunAsync([FromBody] RunTestRequest request)
         {
+            RunResult Fail(string cmd, string err, int exit = -1) => new()
+            {
+                Success = false,
+                ExitCode = exit,
+                Command = cmd,
+                Output = "",
+                Error = err,
+                DurationMs = 0
+            };
+
             if (request == null)
-                return BadRequest(new { success = false, message = "Invalid request" });
+                return new JsonResult(Fail("(none)", "Invalid request"));
 
             var tests = LoadApiTests();
             var overrides = LoadUserOverrides();
-            ApiTestConfig? test = null;
-
-            if (!string.IsNullOrWhiteSpace(request.Id))
-                test = tests.FirstOrDefault(t => t.Id.Equals(request.Id, StringComparison.OrdinalIgnoreCase));
+            var test = !string.IsNullOrWhiteSpace(request.Id)
+                ? tests.FirstOrDefault(t => t.Id.Equals(request.Id, StringComparison.OrdinalIgnoreCase))
+                : null;
 
             if (test == null)
-                return BadRequest(new { success = false, message = "Test not found" });
+                return new JsonResult(Fail(request.Id ?? "(none)", "Test not found"));
 
-            var parameters = test.Parameters.Select(p => new ApiParam { Name = p.Name, Value = p.Value }).ToList();
+            // Merge parameters
+            var parameters = test.Parameters
+                .Select(p => new ApiParam { Name = p.Name, Value = p.Value })
+                .ToList();
 
             if (overrides.TryGetValue(test.Id, out var userParamOverrides))
             {
                 foreach (var ov in userParamOverrides)
                 {
-                    var existing = parameters.FirstOrDefault(x => x.Name.Equals(ov.Name, StringComparison.OrdinalIgnoreCase));
-                    if (existing != null) existing.Value = ov.Value;
+                    var match = parameters.FirstOrDefault(p => p.Name.Equals(ov.Name, StringComparison.OrdinalIgnoreCase));
+                    if (match != null) match.Value = ov.Value;
                 }
             }
-
             if (request.Parameters != null)
             {
                 foreach (var p in request.Parameters.Where(p => !string.IsNullOrWhiteSpace(p.Name)))
                 {
-                    var existing = parameters.FirstOrDefault(x => x.Name.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
-                    if (existing != null) existing.Value = p.Value ?? "";
+                    var match = parameters.FirstOrDefault(x => x.Name.Equals(p.Name, StringComparison.OrdinalIgnoreCase));
+                    if (match != null) match.Value = p.Value ?? "";
                     else parameters.Add(new ApiParam { Name = p.Name, Value = p.Value ?? "" });
                 }
             }
 
             string scriptPath = test.ScriptPath.Trim();
-            _logger.LogInformation("Processing script: '{Script}' (Length: {Length})", scriptPath, scriptPath.Length);
-
             string exe;
-            var argList = new List<string>();
-            
-            _logger.LogInformation("ScriptPath: '{ScriptPath}'", scriptPath);
-            _logger.LogInformation("Starts with docker: {StartsWithDocker}", scriptPath.StartsWith("docker ", StringComparison.OrdinalIgnoreCase));
+            List<string> argTokens = new();
 
-            if (scriptPath.StartsWith("docker ", StringComparison.OrdinalIgnoreCase))
+            bool isDocker = scriptPath.StartsWith("docker ", StringComparison.OrdinalIgnoreCase);
+            if (isDocker)
             {
-                _logger.LogInformation("Detected Docker command");
                 exe = "docker";
-                
-                var dockerArgs = scriptPath.Substring(7).Trim();
-                _logger.LogInformation("Docker args: '{Args}'", dockerArgs);
-                
-                var parts = ParseDockerCommand(dockerArgs);
-                argList.AddRange(parts);
-                
+                var dockerArgs = scriptPath[7..].Trim();
+                var parts = ParseDockerCommand(dockerArgs)
+                    .Where(p => !string.Equals(p, "-i", StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(p, "-t", StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(p, "-it", StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(p, "-ti", StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(p, "--tty", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                argTokens.AddRange(parts);
                 foreach (var p in parameters)
                 {
                     if (!string.IsNullOrEmpty(p.Name))
                     {
-                        argList.Add($"-{p.Name}");
+                        argTokens.Add($"-{p.Name}");
                         if (!string.IsNullOrEmpty(p.Value))
-                            argList.Add(p.Value);
+                            argTokens.Add(p.Value);
                     }
                 }
             }
             else
             {
-                _logger.LogInformation("Taking PowerShell branch");
-                exe = FindPowerShellExecutable();
-                bool isPsScript = scriptPath.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase);
-                
-                if (isPsScript)
-                {
-                    argList.Add("-NoProfile");
-                    argList.Add("-ExecutionPolicy Bypass");
-                    argList.Add("-File");
-                    argList.Add(Quote(scriptPath));
-                }
-                else
-                {
-                    if (System.IO.File.Exists(scriptPath) && scriptPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                    {
-                        exe = scriptPath;
-                    }
-                    else
-                    {
-                        argList.Add("-NoProfile");
-                        argList.Add("-ExecutionPolicy Bypass");
-                        argList.Add("-File");
-                        argList.Add(Quote(scriptPath));
-                    }
-                }
+                // Allow executing a direct executable path (no PowerShell)
+                if (!System.IO.File.Exists(scriptPath))
+                    return new JsonResult(Fail(scriptPath, "Script/executable not found"));
 
+                exe = scriptPath;
                 foreach (var p in parameters)
                 {
-                    argList.Add("-p");
-                    argList.Add(EscapeArg(p.Name));
-                    if (!string.IsNullOrEmpty(p.Value))
-                        argList.Add(EscapeArg(p.Value));
+                    if (!string.IsNullOrWhiteSpace(p.Name))
+                    {
+                        argTokens.Add($"-{p.Name}");
+                        if (!string.IsNullOrEmpty(p.Value))
+                            argTokens.Add(p.Value);
+                    }
                 }
             }
-            
-            var finalArgs = string.Join(" ", argList);
+
+            string finalArgs = string.Join(" ", argTokens.Select(QuoteIfNeeded));
+            var fullCommand = exe + (finalArgs.Length > 0 ? " " + finalArgs : "");
 
             var sw = Stopwatch.StartNew();
-            string stdout = "";
-            string stderr = "";
+            var stdoutBuilder = new StringBuilder();
+            var stderrBuilder = new StringBuilder();
             int exitCode = -1;
-
-            _logger.LogInformation("About to execute: FileName='{FileName}', Arguments='{Arguments}'", exe, finalArgs);
+            bool timedOut = false;
+            const int timeoutMs = 60000;
 
             try
             {
@@ -225,42 +217,58 @@ namespace ApplicationDeployment.Pages
                     CreateNoWindow = true
                 };
 
-                _logger.LogInformation("ProcessStartInfo created successfully");
+                using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
-                using var proc = Process.Start(psi);
-                if (proc == null)
+                var stdOutTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var stdErrTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                proc.OutputDataReceived += (_, e) =>
                 {
-                    _logger.LogError("Process.Start returned null");
-                    stderr = "Failed to start process";
+                    if (e.Data == null) stdOutTcs.TrySetResult(true);
+                    else stdoutBuilder.AppendLine(e.Data);
+                };
+                proc.ErrorDataReceived += (_, e) =>
+                {
+                    if (e.Data == null) stdErrTcs.TrySetResult(true);
+                    else stderrBuilder.AppendLine(e.Data);
+                };
+
+                proc.Start();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+
+                var waitExitTask = proc.WaitForExitAsync();
+                var completed = await Task.WhenAny(Task.WhenAll(stdOutTcs.Task, stdErrTcs.Task, waitExitTask),
+                                                   Task.Delay(timeoutMs));
+
+                if (completed != Task.Delay(timeoutMs))
+                {
+                    await Task.WhenAll(stdOutTcs.Task, stdErrTcs.Task);
+                    exitCode = proc.HasExited ? proc.ExitCode : -1;
                 }
-                else
+                if (!proc.HasExited)
                 {
-                    _logger.LogInformation("Process started successfully with ID: {ProcessId}", proc.Id);
-                    stdout = await proc.StandardOutput.ReadToEndAsync();
-                    stderr = await proc.StandardError.ReadToEndAsync();
-                    proc.WaitForExit();
-                    exitCode = proc.ExitCode;
-                    _logger.LogInformation("Process completed with exit code: {ExitCode}", exitCode);
+                    timedOut = true;
+                    try { proc.Kill(entireProcessTree: true); } catch { }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Exception during process execution");
-                stderr += (stderr.Length > 0 ? Environment.NewLine : "") + ex.Message;
+                stderrBuilder.AppendLine(ex.Message);
             }
-
-            _logger.LogInformation("Execution completed: ExitCode={ExitCode}, StdOut length={StdOutLength}, StdErr length={StdErrLength}", 
-                exitCode, stdout?.Length ?? 0, stderr?.Length ?? 0);
 
             sw.Stop();
 
+            if (timedOut)
+                stderrBuilder.AppendLine($"[TIMEOUT] Process exceeded {timeoutMs} ms and was terminated.");
+
             var result = new RunResult
             {
-                Success = exitCode == 0,
+                Success = !timedOut && exitCode == 0,
                 ExitCode = exitCode,
-                Command = exe + " " + finalArgs,
-                Output = stdout ?? string.Empty,
-                Error = stderr ?? string.Empty,
+                Command = fullCommand,
+                Output = TrimTrailingNewline(stdoutBuilder.ToString()),
+                Error = TrimTrailingNewline(stderrBuilder.ToString()),
                 DurationMs = sw.Elapsed.TotalMilliseconds
             };
 
@@ -364,24 +372,6 @@ namespace ApplicationDeployment.Pages
             }
         }
 
-        private string FindPowerShellExecutable()
-        {
-            var pwsh = Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\PowerShell\7\pwsh.exe");
-            if (System.IO.File.Exists(pwsh)) return pwsh;
-            return "powershell.exe";
-        }
-
-        private static string Quote(string s) =>
-            s.Contains(' ') ? $"\"{s}\"" : s;
-
-        private static string EscapeArg(string s)
-        {
-            if (string.IsNullOrEmpty(s)) return "\"\"";
-            if (s.Any(c => char.IsWhiteSpace(c) || c=='\"'))
-                return "\"" + s.Replace("\"", "\\\"") + "\"";
-            return s;
-        }
-
         private List<string> ParseDockerCommand(string dockerArgs)
         {
             var result = new List<string>();
@@ -434,6 +424,17 @@ namespace ApplicationDeployment.Pages
             }
             
             return result;
+        }
+
+        private static string TrimTrailingNewline(string s) =>
+            s.EndsWith(Environment.NewLine) ? s[..^Environment.NewLine.Length] : s;
+
+        private static string QuoteIfNeeded(string token)
+        {
+            if (string.IsNullOrEmpty(token)) return "\"\"";
+            if (token.Any(char.IsWhiteSpace) && !(token.StartsWith('"') && token.EndsWith('"')))
+                return "\"" + token.Replace("\"", "\\\"") + "\"";
+            return token;
         }
     }
 }
