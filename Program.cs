@@ -1,5 +1,5 @@
-using ApplicationDeployment.Hubs;
-using ApplicationDeployment.Services;
+using DevApp.Hubs;
+using DevApp.Services;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);

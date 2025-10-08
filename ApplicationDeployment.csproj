@@ -4,8 +4,8 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>ApplicationDeployment</RootNamespace>
-    <AssemblyName>ApplicationDeployment</AssemblyName>
+    <RootNamespace>DevApp</RootNamespace>
+    <AssemblyName>DevApp</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

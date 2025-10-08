@@ -1,4 +1,4 @@
-namespace ApplicationDeployment.Models
+namespace DevApp.Models
 {
     public class ServerInfo
     {

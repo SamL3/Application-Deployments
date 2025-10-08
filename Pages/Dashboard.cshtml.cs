@@ -8,10 +8,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Management;
-using ApplicationDeployment.Models;
-using ApplicationDeployment.Services;
+using DevApp.Models;
+using DevApp.Services;
 
-namespace ApplicationDeployment.Pages
+namespace DevApp.Pages
 {
     public class DashboardModel : PageModel
     {

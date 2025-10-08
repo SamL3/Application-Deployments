@@ -1,6 +1,6 @@
 ﻿@page
 @using System.Text.Json
-@model ApplicationDeployment.Pages.RemoveModel
+@model DevApp.Pages.RemoveModel
 @{
     // Declare helper BEFORE first usage
     Func<string,bool> isUp = h => Model.ServerAccessibility != null && Model.ServerAccessibility.TryGetValue(h, out var ok) && ok;

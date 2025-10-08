@@ -1,4 +1,4 @@
-using ApplicationDeployment.Models;
+using DevApp.Models;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -11,7 +11,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-namespace ApplicationDeployment.Pages
+namespace DevApp.Pages
 {
     public class MaintenanceModel : PageModel
     {

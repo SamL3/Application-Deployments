@@ -12,7 +12,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
-namespace ApplicationDeployment.Pages
+namespace DevApp.Pages
 {
     [ValidateAntiForgeryToken]
     public class TestModel : PageModel
@@ -47,6 +47,8 @@ namespace ApplicationDeployment.Pages
 
         public void OnGet()
         {
+            ViewData["Title"] = "DevApp - API Tests";
+
             ApiTests = LoadApiTests();
             var overrides = LoadUserOverrides();
             foreach (var test in ApiTests)

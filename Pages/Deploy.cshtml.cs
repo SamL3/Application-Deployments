@@ -1,6 +1,6 @@
-using ApplicationDeployment.Hubs;
-using ApplicationDeployment.Models;
-using ApplicationDeployment.Services;
+using DevApp.Hubs;
+using DevApp.Models;
+using DevApp.Services;
 using IWshRuntimeLibrary;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -17,7 +17,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using System.Net.NetworkInformation; // add
 
-namespace ApplicationDeployment.Pages
+namespace DevApp.Pages
 {
     public class DeployModel : PageModel
     {

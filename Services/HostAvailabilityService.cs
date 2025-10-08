@@ -10,7 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace ApplicationDeployment.Services
+namespace DevApp.Services
 {
     public class HostStatus
     {

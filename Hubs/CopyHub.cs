@@ -1,6 +1,6 @@
 ﻿using Microsoft.AspNetCore.SignalR;
 
-namespace ApplicationDeployment.Hubs
+namespace DevApp.Hubs
 {
     public class CopyHub : Hub
     {

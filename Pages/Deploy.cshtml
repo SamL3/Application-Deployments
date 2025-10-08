@@ -1,5 +1,5 @@
 ﻿@page
-@model ApplicationDeployment.Pages.DeployModel
+@model DevApp.Pages.DeployModel
 @{
     // Move this block ABOVE any usage of isUp
     Func<string,bool> isUp = h => Model.ServerAccessibility != null && Model.ServerAccessibility.TryGetValue(h, out var ok) && ok;

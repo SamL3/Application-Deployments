@@ -1,4 +1,4 @@
-using ApplicationDeployment.Models;
+using DevApp.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -10,9 +10,9 @@ using System.IO;
 using System.Linq;
 using System.Net.NetworkInformation;
 using System.Text.Json;
-using ApplicationDeployment.Services;
+using DevApp.Services;
 
-namespace ApplicationDeployment.Pages
+namespace DevApp.Pages
 {
     public class RemoveModel : PageModel
     {

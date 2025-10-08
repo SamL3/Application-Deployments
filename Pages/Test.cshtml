@@ -1,8 +1,11 @@
 ﻿@page
 @using System.Text.Json
-@model ApplicationDeployment.Pages.TestModel
+@model DevApp.Pages.TestModel
 
-<h1 class="page-title">API Tests</h1>
+<title>@(ViewData["Title"] ?? "DevApp")</title>
+<header class="navbar-brand">DevApp</header>
+
+<h1 class="page-title">DevApp • API Tests</h1>
 
 <form class="d-none">
     @Html.AntiForgeryToken()
