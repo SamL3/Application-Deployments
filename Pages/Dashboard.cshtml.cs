@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Management;
 using ApplicationDeployment.Models;
+using ApplicationDeployment.Services;
 
 namespace ApplicationDeployment.Pages
 {
@@ -17,40 +18,71 @@ namespace ApplicationDeployment.Pages
         private readonly IConfiguration _config;
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<DashboardModel> _logger;
+        private readonly HostAvailabilityService _hostSvc;
 
-        public DashboardModel(IConfiguration config, IWebHostEnvironment env, ILogger<DashboardModel> logger)
+        public DashboardModel(IConfiguration config, IWebHostEnvironment env,
+            ILogger<DashboardModel> logger, HostAvailabilityService hostSvc)
         {
             _config = config;
             _env = env;
             _logger = logger;
+            _hostSvc = hostSvc;
         }
 
         private bool ShowApps => _config.GetValue<bool>("Dashboard:ShowApps", false);
         private string RootApps => _config["CSTApps"] ?? string.Empty;
 
+        public IReadOnlyDictionary<string, HostStatus> HostStatuses => _hostSvc.GetStatuses();
+
         public void OnGet() { }
+
+        public IActionResult OnGetHostStatuses()
+        {
+            var statuses = _hostSvc.GetStatuses().Values
+                .OrderBy(s => s.Host, StringComparer.OrdinalIgnoreCase);
+            return new JsonResult(new
+            {
+                scanInProgress = _hostSvc.ScanInProgress,
+                completed = _hostSvc.Completed,
+                total = _hostSvc.Total,
+                statuses
+            });
+        }
+
+        public async Task<IActionResult> OnPostRefreshHostsAsync()
+        {
+            await _hostSvc.TriggerScanAsync();
+            return new JsonResult(new { started = true });
+        }
 
         public IActionResult OnGetServers()
         {
             try
             {
-                var serversSection = _config.GetSection("Servers");
-                if (!serversSection.Exists())
-                    return new JsonResult(Array.Empty<object>());
+                // Build lookup of descriptions from configuration (supports objects or plain strings)
+                var descriptions = _config.GetSection("Servers").GetChildren()
+                    .Select(c => new
+                    {
+                        Host = c.GetValue<string>("HostName") ?? c.Get<string>(),
+                        Description = c.GetValue<string>("Description")
+                    })
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Host))
+                    .GroupBy(x => x.Host!, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First().Description, StringComparer.OrdinalIgnoreCase);
 
-                var servers = serversSection.Get<List<ServerInfo>>() ?? new List<ServerInfo>();
-                
-                // Return server objects with hostname and description
-                var serverData = servers
-                    .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
-                    .Select(s => new { 
-                        hostname = s.HostName, 
-                        description = s.Description ?? "",
-                        userid = s.UserID ?? ""
+                var servers = _hostSvc.GetStatuses().Values
+                    .OrderBy(s => s.Host, StringComparer.OrdinalIgnoreCase)
+                    .Select(s => new
+                    {
+                        host = s.Host,
+                        description = descriptions.TryGetValue(s.Host, out var d) ? d : null,
+                        accessible = s.Accessible,
+                        latencyMs = s.LatencyMs,
+                        message = s.Message
                     })
                     .ToList();
-                
-                return new JsonResult(serverData);
+
+                return new JsonResult(servers);
             }
             catch (Exception ex)
             {
@@ -67,15 +99,12 @@ namespace ApplicationDeployment.Pages
             try
             {
                 var disks = GetRemoteLogicalDisks(server)
-                    .Where(d => d.Name.Equals("C:", StringComparison.OrdinalIgnoreCase)) // Only C:
+                    .Where(d => d.Name.Equals("C:", StringComparison.OrdinalIgnoreCase))
                     .ToList();
 
                 var deployments = GetDeployments(server, RootApps);
-
-                // Only enumerate installed apps if enabled; otherwise keep empty list
                 var installedApps = ShowApps ? GetRemoteInstalledApps(server) : new List<InstalledApp>();
 
-                // Project to a stable DTO type to avoid ternary anonymous type issue
                 var appPayload = ShowApps
                     ? installedApps.Select(a => new AppInfo
                     {
@@ -99,7 +128,7 @@ namespace ApplicationDeployment.Pages
                         totalSizeMB = d.TotalSizeMB,
                         builds = d.Builds.Select(b => new { name = b.Name, sizeMB = b.SizeMB })
                     }),
-                    apps = appPayload,          // always a List<AppInfo>
+                    apps = appPayload,
                     totalBuildSizeMB,
                     totalBuildCount,
                     showApps = ShowApps
@@ -167,7 +196,6 @@ namespace ApplicationDeployment.Pages
             public string? Publisher { get; set; }
         }
 
-        // DTO for JSON projection (stable type)
         private class AppInfo
         {
             public string DisplayName { get; set; } = string.Empty;

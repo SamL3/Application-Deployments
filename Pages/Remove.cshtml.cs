@@ -10,6 +10,7 @@ using System.IO;
 using System.Linq;
 using System.Net.NetworkInformation;
 using System.Text.Json;
+using ApplicationDeployment.Services;
 
 namespace ApplicationDeployment.Pages
 {
@@ -18,17 +19,19 @@ namespace ApplicationDeployment.Pages
         private readonly IConfiguration _config;
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<RemoveModel> _logger;
+        private readonly HostAvailabilityService _hostSvc;
 
-        public RemoveModel(IConfiguration config, IWebHostEnvironment env, ILogger<RemoveModel> logger)
+        public RemoveModel(IConfiguration config, IWebHostEnvironment env, ILogger<RemoveModel> logger, HostAvailabilityService hostSvc)
         {
             _config = config;
             _env = env;
             _logger = logger;
+            _hostSvc = hostSvc;
         }
 
         public List<SelectListItem> Servers { get; set; } = new();
         public List<ServerInfo> ServerList { get; set; } = new();
-        public Dictionary<string, bool> ServerAccessibility { get; set; } = new();
+        public Dictionary<string, bool> ServerAccessibility { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         public string CstApps => _config["CSTApps"] ?? string.Empty;
 
@@ -37,11 +40,12 @@ namespace ApplicationDeployment.Pages
             var serverListConfig = _config.GetSection("Servers").Get<List<ServerInfo>>();
             ServerList = serverListConfig ?? new List<ServerInfo>();
 
-            var root = _config["CSTApps"];
+            // Populate accessibility from central cache
             foreach (var s in ServerList.Where(x => !string.IsNullOrWhiteSpace(x.HostName)))
             {
-                var ok = IsServerAccessible(s.HostName, root);
-                ServerAccessibility[s.HostName] = ok;
+                var statuses = _hostSvc.GetStatuses();
+                if (statuses.TryGetValue(s.HostName, out var st))
+                    ServerAccessibility[s.HostName] = st.Accessible;
             }
 
             Servers = ServerList

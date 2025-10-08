@@ -1,5 +1,6 @@
 using ApplicationDeployment.Hubs;
 using ApplicationDeployment.Models;
+using ApplicationDeployment.Services;
 using IWshRuntimeLibrary;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -25,17 +26,20 @@ namespace ApplicationDeployment.Pages
         private readonly ILogger<DeployModel> _logger;
         private readonly Dictionary<string, AppExeEntry> _appExes;
         private readonly IHubContext<CopyHub> _hubContext;
+        private readonly HostAvailabilityService _hostSvc;
 
         public DeployModel(
             IConfiguration config,
             IWebHostEnvironment env,
             ILogger<DeployModel> logger,
-            IHubContext<CopyHub> hubContext)
+            IHubContext<CopyHub> hubContext,
+            HostAvailabilityService hostSvc)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _env = env ?? throw new ArgumentNullException(nameof(env));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _hubContext = hubContext ?? throw new ArgumentNullException(nameof(hubContext));
+            _hostSvc = hostSvc ?? throw new ArgumentNullException(nameof(hostSvc));
             _appExes = LoadAppExesFromConfig();
 
             _logger.LogInformation("Deploy ctor: appExes mappings loaded: {Count}", _appExes.Count);
@@ -68,7 +72,7 @@ namespace ApplicationDeployment.Pages
         }
 
         [BindProperty] public List<SelectListItem> Servers { get; set; } = new();
-        [BindProperty] public Dictionary<string,bool> ServerAccessibility { get; set; } = new();
+        [BindProperty] public Dictionary<string,bool> ServerAccessibility { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         [BindProperty] public List<ServerInfo> ServerList { get; set; } = new();
         [BindProperty] public string[] SelectedServers { get; set; } = Array.Empty<string>();
 
@@ -84,10 +88,11 @@ namespace ApplicationDeployment.Pages
             var serversConfig = serversSection.Get<List<ServerInfo>>() ?? new();
             ServerList = serversConfig;
 
-            var root = _config["CSTApps"];
+            var statuses = _hostSvc.GetStatuses();
             foreach (var s in ServerList.Where(s => !string.IsNullOrWhiteSpace(s.HostName)))
             {
-                ServerAccessibility[s.HostName] = IsServerAccessible(s.HostName, root);
+                if (statuses.TryGetValue(s.HostName, out var st))
+                    ServerAccessibility[s.HostName] = st.Accessible;
             }
 
             // Load environments from appconfig.json (JSON array of strings)

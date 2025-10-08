@@ -9,9 +9,17 @@
 <div class="container-fluid py-3">
     <h1 class="h3 fw-semibold text-primary mb-4">Dashboard</h1>
 
-    <div id="serversRow" class="row g-4">
-        <!-- Server cards injected here -->
+    <div class="mb-3 d-flex align-items-center gap-2">
+        <button id="refreshHostsBtn" class="btn btn-sm btn-outline-primary">Refresh Host Availability</button>
+        <div class="flex-grow-1">
+            <div class="progress" style="height:20px;" id="hostScanProgressWrapper">
+                <div id="hostScanBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%">Idle</div>
+            </div>
+        </div>
+        <span id="hostScanSummary" class="small text-muted"></span>
     </div>
+
+    <div class="row g-3 mt-3" id="serversRow"></div>
 </div>
 
 @section Scripts {
@@ -24,17 +32,85 @@
     .collapse-toggle { cursor:pointer; }
     .builds-list table td { padding:.25rem .5rem; }
     .app-name-trunc { max-width:180px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .server-header { min-height: 2.5rem; } /* Ensure consistent header height */
+    .server-header { min-height: 2.5rem; }
     .server-hostname { font-weight: 600; }
-    .server-description { font-size: 0.75rem; color: #6c757d; font-weight: normal; }
+    .server-description { font-size: 0.65rem; color: #6c757d; font-weight: normal; margin-left:.5rem; max-width:120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 </style>
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
     const SHOW_APPS = @(showApps ? "true" : "false");
     const serversRow = document.getElementById('serversRow');
+    const refreshBtn = document.getElementById('refreshHostsBtn');
+    const scanBar = document.getElementById('hostScanBar');
+    const scanSummary = document.getElementById('hostScanSummary');
 
-    loadServers();
+    let pollTimer = null;
+
+    refreshBtn.addEventListener('click', async () => {
+        await triggerScan();
+    });
+
+    // Kick off initial polling (service starts a scan on startup)
+    startPolling();
+
+    async function triggerScan() {
+        try {
+            refreshBtn.disabled = true;
+            scanBar.classList.add('progress-bar-animated');
+            scanBar.textContent = 'Starting...';
+            scanBar.style.width = '0%';
+            scanSummary.textContent = '';
+            await fetch('/Dashboard?handler=RefreshHosts', { method: 'POST' });
+            startPolling(true);
+        } catch (e) {
+            scanBar.classList.remove('progress-bar-animated');
+            scanBar.classList.add('bg-danger');
+            scanBar.textContent = 'Error starting scan';
+        }
+    }
+
+    function startPolling(clearServers = false) {
+        if (pollTimer) clearInterval(pollTimer);
+        if (clearServers) serversRow.innerHTML = '';
+        pollOnce(); // immediate
+        pollTimer = setInterval(pollOnce, 1500);
+    }
+
+    async function pollOnce() {
+        try {
+            const resp = await fetch('/Dashboard?handler=HostStatuses', { cache: 'no-store' });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            updateProgress(data);
+            if (!data.scanInProgress) {
+                if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+                refreshBtn.disabled = false;
+                loadServers(); // load cards after scan completes
+            }
+        } catch (e) {
+            scanBar.classList.remove('progress-bar-animated');
+            scanBar.classList.add('bg-danger');
+            scanBar.textContent = 'Status error';
+        }
+    }
+
+    function updateProgress(data) {
+        const { scanInProgress, completed, total } = data;
+        if (!total) {
+            scanBar.style.width = '100%';
+            scanBar.textContent = 'No servers';
+            scanBar.classList.remove('progress-bar-animated');
+            return;
+        }
+        const pct = Math.min(100, Math.round((completed / total) * 100));
+        scanBar.style.width = pct + '%';
+        scanBar.textContent = scanInProgress ? `Scanning ${completed}/${total}` : 'Complete';
+        scanBar.classList.toggle('progress-bar-animated', scanInProgress);
+        scanSummary.textContent = scanInProgress
+            ? `Scanning... (${pct}%)`
+            : `Completed: ${completed}/${total}`;
+    }
 
     async function loadServers() {
         serversRow.innerHTML = '<div class="col-12 text-center text-muted py-5">Loading servers...</div>';
@@ -43,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const servers = await resp.json();
             if (!servers || servers.length === 0) {
-                serversRow.innerHTML = '<div class="col-12 text-center text-muted py-5">No servers found.</div>';
+                serversRow.innerHTML = '<div class="col-12 text-center text-muted py-5">No hosts.</div>';
                 return;
             }
             serversRow.innerHTML = '';
@@ -52,7 +128,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 col.className = 'col-xl-3 col-lg-4 col-md-6';
                 col.innerHTML = serverCardSkeleton(s);
                 serversRow.appendChild(col);
-                loadServerDetails(s);
+                if (s.accessible) {
+                    loadServerDetails(s.host);
+                }
             });
         } catch (e) {
             serversRow.innerHTML = `<div class="col-12 text-danger text-center py-5">Error loading servers: ${escapeHtml(e.message)}</div>`;
@@ -60,36 +138,44 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function serverCardSkeleton(server) {
-        // Handle both string (legacy) and object (new) server data
-        const hostname = typeof server === 'string' ? server : server.hostname;
-        const description = typeof server === 'object' ? server.description : '';
-        
+        const hostname = server.host;
+        const accessible = server.accessible === true;
+        const description = server.description || '';
+        const msg = server.message || (accessible ? '' : 'Offline');
+        const latency = accessible && server.latencyMs != null ? `${server.latencyMs} ms` : '';
+        const headerBadge = accessible
+            ? `<span class="badge text-bg-success ms-2">Online</span>`
+            : `<span class="badge text-bg-danger ms-2">Offline</span>`;
+
         return `
-        <div class="card shadow-sm server-card" data-server="${escapeHtml(hostname)}">
+        <div class="card shadow-sm server-card ${accessible ? '' : 'border-danger'}" data-server="${escapeHtml(hostname)}">
             <div class="card-header d-flex justify-content-between align-items-start py-2 server-header">
-                <div class="d-flex justify-content-between w-100">
+                <div class="d-flex align-items-center flex-wrap">
                     <span class="server-hostname small">${escapeHtml(hostname)}</span>
-                    ${description ? `<span class="server-description text-end">${escapeHtml(description)}</span>` : ''}
+                    ${description ? `<span class="server-description" title="${escapeHtml(description)}">${escapeHtml(description)}</span>` : ''}
+                    ${headerBadge}
                 </div>
-                <div class="spinner-border spinner-sm text-secondary ms-2" role="status"></div>
+                ${accessible ? '<div class="spinner-border spinner-sm text-secondary ms-2" role="status"></div>' : ''}
             </div>
             <div class="card-body p-2">
                 <div class="section-title mt-0">Disk (C:)</div>
-                <div class="disk-area small text-muted">Loading...</div>
+                <div class="disk-area small ${accessible ? 'text-muted' : 'text-secondary'}">${accessible ? 'Loading...' : 'N/A'}</div>
                 <div class="section-title">Deployments</div>
-                <div class="deployments-area small text-muted">Loading...</div>
-                ${SHOW_APPS ? `
+                <div class="deployments-area small ${accessible ? 'text-muted' : 'text-secondary'}">${accessible ? 'Loading...' : 'N/A'}</div>
+                ${@(showApps ? "true" : "false") && true ? `
                     <div class="section-title">Applications</div>
-                    <div class="apps-area small text-muted">Loading...</div>` : ``}
+                    <div class="apps-area small ${accessible ? 'text-muted' : 'text-secondary'}">${accessible ? 'Loading...' : 'N/A'}</div>` : ``}
             </div>
-            <div class="card-footer bg-light py-1 text-end small text-muted status-line">Loading...</div>
+            <div class="card-footer bg-light py-1 small text-muted status-line">
+                ${accessible
+                    ? `Latency: ${latency || 'n/a'}`
+                    : `Offline${msg ? ' - ' + escapeHtml(msg) : ''}`}
+            </div>
         </div>`;
     }
 
     async function loadServerDetails(server) {
-        // Handle both string (legacy) and object (new) server data
-        const hostname = typeof server === 'string' ? server : server.hostname;
-        
+        const hostname = typeof server === 'string' ? server : server.hostname || server.host;
         const card = document.querySelector(`.server-card[data-server="${CSS.escape(hostname)}"]`);
         if (!card) return;
         const spinner = card.querySelector('.spinner-border');
@@ -102,12 +188,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const resp = await fetch(`/Dashboard?handler=ServerDetails&server=${encodeURIComponent(hostname)}`, { cache:'no-store' });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
-
             renderDisks(diskArea, data.disks || []);
             renderDeployments(deploymentsArea, data.deployments || []);
-            if (SHOW_APPS && appsArea) {
-                renderApps(appsArea, data.apps || []);
-            }
+            if (SHOW_APPS && appsArea) renderApps(appsArea, data.apps || []);
             statusLine.textContent =
                 (SHOW_APPS ? `Apps: ${(data.apps||[]).length} | ` : '') +
                 `Builds: ${data.totalBuildCount ?? 0} | Size: ${(data.totalBuildSizeMB ?? 0).toFixed(1)} MB`;
@@ -192,8 +275,6 @@ document.addEventListener('DOMContentLoaded', () => {
             </table>`;
         container.innerHTML = '';
         container.appendChild(wrapper);
-
-        // Toggle build details
         wrapper.querySelectorAll('.collapse-toggle').forEach(row => {
             row.addEventListener('click', () => {
                 const app = row.getAttribute('data-app');
@@ -205,7 +286,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderApps(container, apps) {
         if (!apps.length) { container.innerHTML = '<span class="text-muted">No applications</span>'; return; }
-        // Show only first 12, expand on click
         const max = 12;
         const short = apps.slice(0,max);
         container.innerHTML = `
