@@ -1,30 +1,37 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 
 namespace ApplicationDeployment.Pages
 {
+    [ValidateAntiForgeryToken]
     public class TestModel : PageModel
     {
+        private readonly IConfiguration _config;
         private readonly IWebHostEnvironment _env;
         private readonly ILogger<TestModel> _logger;
 
-        public TestModel(IWebHostEnvironment env, ILogger<TestModel> logger)
+        public TestModel(IConfiguration config, IWebHostEnvironment env, ILogger<TestModel> logger)
         {
+            _config = config;
             _env = env;
             _logger = logger;
         }
 
         public List<ApiTestConfig> ApiTests { get; set; } = new();
 
-        private string ApiTestsFile => Path.Combine(_env.WebRootPath, "apiTests.json");
+        private string AppConfigPath => Path.Combine(_env.ContentRootPath, "appconfig.json");
+        
         private string UserOverrideFile
         {
             get
@@ -42,7 +49,6 @@ namespace ApplicationDeployment.Pages
         {
             ApiTests = LoadApiTests();
             var overrides = LoadUserOverrides();
-            // Merge overrides (only values)
             foreach (var test in ApiTests)
             {
                 if (overrides.TryGetValue(test.Id, out var paramOverrides))
@@ -66,6 +72,7 @@ namespace ApplicationDeployment.Pages
             public string ScriptPath { get; set; } = string.Empty;
             public List<ApiParam> Parameters { get; set; } = new();
         }
+
         public class ApiParam
         {
             public string Name { get; set; } = string.Empty;
@@ -94,14 +101,13 @@ namespace ApplicationDeployment.Pages
             public double DurationMs { get; set; }
         }
 
-        [ValidateAntiForgeryToken]
         public async Task<IActionResult> OnPostRunAsync([FromBody] RunTestRequest request)
         {
             if (request == null)
                 return BadRequest(new { success = false, message = "Invalid request" });
 
             var tests = LoadApiTests();
-            var overrides = LoadUserOverrides(); // ensure run uses user's overrides where not replaced
+            var overrides = LoadUserOverrides();
             ApiTestConfig? test = null;
 
             if (!string.IsNullOrWhiteSpace(request.Id))
@@ -110,7 +116,6 @@ namespace ApplicationDeployment.Pages
             if (test == null)
                 return BadRequest(new { success = false, message = "Test not found" });
 
-            // Compose parameter list (base -> user overrides -> request overrides)
             var parameters = test.Parameters.Select(p => new ApiParam { Name = p.Name, Value = p.Value }).ToList();
 
             if (overrides.TryGetValue(test.Id, out var userParamOverrides))
@@ -132,50 +137,82 @@ namespace ApplicationDeployment.Pages
                 }
             }
 
-            string scriptPath = test.ScriptPath;
-            if (string.IsNullOrWhiteSpace(scriptPath))
-                return BadRequest(new { success = false, message = "Script path not provided" });
+            string scriptPath = test.ScriptPath.Trim();
+            _logger.LogInformation("Processing script: '{Script}' (Length: {Length})", scriptPath, scriptPath.Length);
 
-            string exe = FindPowerShellExecutable();
-            bool isPsScript = scriptPath.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase);
+            string exe;
             var argList = new List<string>();
+            
+            _logger.LogInformation("ScriptPath: '{ScriptPath}'", scriptPath);
+            _logger.LogInformation("Starts with docker: {StartsWithDocker}", scriptPath.StartsWith("docker ", StringComparison.OrdinalIgnoreCase));
 
-            if (isPsScript)
+            if (scriptPath.StartsWith("docker ", StringComparison.OrdinalIgnoreCase))
             {
-                argList.Add("-NoProfile");
-                argList.Add("-ExecutionPolicy Bypass");
-                argList.Add("-File");
-                argList.Add(Quote(scriptPath));
+                _logger.LogInformation("Detected Docker command");
+                exe = "docker";
+                
+                var dockerArgs = scriptPath.Substring(7).Trim();
+                _logger.LogInformation("Docker args: '{Args}'", dockerArgs);
+                
+                var parts = ParseDockerCommand(dockerArgs);
+                argList.AddRange(parts);
+                
+                foreach (var p in parameters)
+                {
+                    if (!string.IsNullOrEmpty(p.Name))
+                    {
+                        argList.Add($"-{p.Name}");
+                        if (!string.IsNullOrEmpty(p.Value))
+                            argList.Add(p.Value);
+                    }
+                }
             }
             else
             {
-                if (System.IO.File.Exists(scriptPath) && scriptPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                {
-                    exe = scriptPath;
-                }
-                else
+                _logger.LogInformation("Taking PowerShell branch");
+                exe = FindPowerShellExecutable();
+                bool isPsScript = scriptPath.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase);
+                
+                if (isPsScript)
                 {
                     argList.Add("-NoProfile");
                     argList.Add("-ExecutionPolicy Bypass");
                     argList.Add("-File");
                     argList.Add(Quote(scriptPath));
                 }
-            }
+                else
+                {
+                    if (System.IO.File.Exists(scriptPath) && scriptPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    {
+                        exe = scriptPath;
+                    }
+                    else
+                    {
+                        argList.Add("-NoProfile");
+                        argList.Add("-ExecutionPolicy Bypass");
+                        argList.Add("-File");
+                        argList.Add(Quote(scriptPath));
+                    }
+                }
 
-            foreach (var p in parameters)
-            {
-                argList.Add("-p");
-                argList.Add(EscapeArg(p.Name));
-                if (!string.IsNullOrEmpty(p.Value))
-                    argList.Add(EscapeArg(p.Value));
+                foreach (var p in parameters)
+                {
+                    argList.Add("-p");
+                    argList.Add(EscapeArg(p.Name));
+                    if (!string.IsNullOrEmpty(p.Value))
+                        argList.Add(EscapeArg(p.Value));
+                }
             }
-
+            
             var finalArgs = string.Join(" ", argList);
 
             var sw = Stopwatch.StartNew();
             string stdout = "";
             string stderr = "";
             int exitCode = -1;
+
+            _logger.LogInformation("About to execute: FileName='{FileName}', Arguments='{Arguments}'", exe, finalArgs);
+
             try
             {
                 var psi = new ProcessStartInfo
@@ -188,16 +225,33 @@ namespace ApplicationDeployment.Pages
                     CreateNoWindow = true
                 };
 
-                using var proc = Process.Start(psi)!;
-                stdout = await proc.StandardOutput.ReadToEndAsync();
-                stderr = await proc.StandardError.ReadToEndAsync();
-                proc.WaitForExit();
-                exitCode = proc.ExitCode;
+                _logger.LogInformation("ProcessStartInfo created successfully");
+
+                using var proc = Process.Start(psi);
+                if (proc == null)
+                {
+                    _logger.LogError("Process.Start returned null");
+                    stderr = "Failed to start process";
+                }
+                else
+                {
+                    _logger.LogInformation("Process started successfully with ID: {ProcessId}", proc.Id);
+                    stdout = await proc.StandardOutput.ReadToEndAsync();
+                    stderr = await proc.StandardError.ReadToEndAsync();
+                    proc.WaitForExit();
+                    exitCode = proc.ExitCode;
+                    _logger.LogInformation("Process completed with exit code: {ExitCode}", exitCode);
+                }
             }
             catch (Exception ex)
             {
+                _logger.LogError(ex, "Exception during process execution");
                 stderr += (stderr.Length > 0 ? Environment.NewLine : "") + ex.Message;
             }
+
+            _logger.LogInformation("Execution completed: ExitCode={ExitCode}, StdOut length={StdOutLength}, StdErr length={StdErrLength}", 
+                exitCode, stdout?.Length ?? 0, stderr?.Length ?? 0);
+
             sw.Stop();
 
             var result = new RunResult
@@ -205,15 +259,14 @@ namespace ApplicationDeployment.Pages
                 Success = exitCode == 0,
                 ExitCode = exitCode,
                 Command = exe + " " + finalArgs,
-                Output = stdout,
-                Error = stderr,
+                Output = stdout ?? string.Empty,
+                Error = stderr ?? string.Empty,
                 DurationMs = sw.Elapsed.TotalMilliseconds
             };
 
             return new JsonResult(result);
         }
 
-        [ValidateAntiForgeryToken]
         public IActionResult OnPostSaveUserConfig([FromBody] SaveUserConfigRequest request)
         {
             if (request == null || string.IsNullOrWhiteSpace(request.Id))
@@ -239,15 +292,45 @@ namespace ApplicationDeployment.Pages
         {
             try
             {
-                if (!System.IO.File.Exists(ApiTestsFile))
-                    return new List<ApiTestConfig>();
-                var json = System.IO.File.ReadAllText(ApiTestsFile);
-                return JsonSerializer.Deserialize<List<ApiTestConfig>>(json) ?? new List<ApiTestConfig>();
+                var doc = LoadAppConfig();
+                var testsNode = doc?["ApiTests"] as JsonArray;
+                if (testsNode == null) return new List<ApiTestConfig>();
+                return testsNode
+                    .OfType<JsonObject>()
+                    .Select(o => new ApiTestConfig
+                    {
+                        Id = o["Id"]?.GetValue<string>() ?? Guid.NewGuid().ToString("N"),
+                        Description = o["Description"]?.GetValue<string>() ?? "",
+                        ScriptPath = o["ScriptPath"]?.GetValue<string>() ?? "",
+                        Parameters = (o["Parameters"] as JsonArray)?
+                            .OfType<JsonObject>()
+                            .Select(p => new ApiParam
+                            {
+                                Name = p["Name"]?.GetValue<string>() ?? "",
+                                Value = p["Value"]?.GetValue<string>() ?? ""
+                            }).ToList() ?? new List<ApiParam>()
+                    })
+                    .ToList();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to load API tests");
+                _logger.LogError(ex, "Failed to load API tests from appconfig.json");
                 return new List<ApiTestConfig>();
+            }
+        }
+
+        private JsonObject LoadAppConfig()
+        {
+            try
+            {
+                var json = System.IO.File.ReadAllText(AppConfigPath);
+                var node = JsonNode.Parse(json) as JsonObject;
+                return node ?? new JsonObject();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed reading appconfig.json");
+                return new JsonObject();
             }
         }
 
@@ -297,6 +380,60 @@ namespace ApplicationDeployment.Pages
             if (s.Any(c => char.IsWhiteSpace(c) || c=='\"'))
                 return "\"" + s.Replace("\"", "\\\"") + "\"";
             return s;
+        }
+
+        private List<string> ParseDockerCommand(string dockerArgs)
+        {
+            var result = new List<string>();
+            var current = new StringBuilder();
+            bool inQuotes = false;
+            bool escaped = false;
+            
+            for (int i = 0; i < dockerArgs.Length; i++)
+            {
+                char c = dockerArgs[i];
+                
+                if (escaped)
+                {
+                    current.Append(c);
+                    escaped = false;
+                    continue;
+                }
+                
+                if (c == '\\')
+                {
+                    escaped = true;
+                    current.Append(c);
+                    continue;
+                }
+                
+                if (c == '"')
+                {
+                    inQuotes = !inQuotes;
+                    current.Append(c);
+                    continue;
+                }
+                
+                if (c == ' ' && !inQuotes)
+                {
+                    if (current.Length > 0)
+                    {
+                        result.Add(current.ToString());
+                        current.Clear();
+                    }
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+            
+            if (current.Length > 0)
+            {
+                result.Add(current.ToString());
+            }
+            
+            return result;
         }
     }
 }

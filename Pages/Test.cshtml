@@ -87,7 +87,372 @@ else
 <!-- Find modal unchanged -->
 
 @section Scripts {
+<style>
+    .test-card { margin-bottom: 1rem; }
+    .output-box { 
+        background: #1e1e1e; 
+        color: #d4d4d4; 
+        font-family: 'Courier New', Consolas, monospace; 
+        font-size: 0.85rem; 
+        min-height: 200px; 
+        max-height: 400px; 
+        overflow-y: auto; 
+        padding: 0.75rem; 
+        white-space: pre-wrap; 
+    }
+    .output-box.wrap-on { white-space: pre-wrap; }
+    .output-box.wrap-off { white-space: pre; }
+    .ansi-output .ansi-red { color: #f14c4c; }
+    .ansi-output .ansi-green { color: #23d18b; }
+    .ansi-output .ansi-yellow { color: #f5f543; }
+    .ansi-output .ansi-blue { color: #3b8eea; }
+    .ansi-output .ansi-magenta { color: #d670d6; }
+    .ansi-output .ansi-cyan { color: #29b8db; }
+    .ansi-output .ansi-white { color: #e5e5e5; }
+    .ansi-output .ansi-bright-black { color: #666666; }
+    .cmd-preview { background: #f8f9fa; padding: 0.25rem 0.5rem; border-radius: 0.25rem; }
+    .output-toolbar { margin-bottom: 0.5rem; }
+    .output-toolbar .btn { margin-right: 0.25rem; }
+    .param-row { margin-bottom: 0.5rem; }
+    .find-modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                  background: white; border: 1px solid #ccc; border-radius: 0.5rem; padding: 1rem; z-index: 1000; }
+    .find-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+                    background: rgba(0,0,0,0.5); z-index: 999; }
+</style>
+
 <script>
-// existing JS unchanged
+document.addEventListener('DOMContentLoaded', () => {
+    const token = document.querySelector('input[name="__RequestVerificationToken"]').value;
+    
+    // Global wrap toggle
+    const globalWrapToggle = document.getElementById('wrapToggle');
+    globalWrapToggle.addEventListener('change', () => {
+        document.querySelectorAll('.output-box').forEach(box => {
+            box.classList.toggle('wrap-on', globalWrapToggle.checked);
+            box.classList.toggle('wrap-off', !globalWrapToggle.checked);
+        });
+    });
+
+    // Refresh all button
+    document.getElementById('refreshAllBtn').addEventListener('click', () => {
+        window.location.reload();
+    });
+
+    // Event delegation for all test card buttons
+    document.addEventListener('click', async (e) => {
+        const testCard = e.target.closest('.test-card');
+        if (!testCard) return;
+
+        const testId = testCard.dataset.testId;
+        
+        if (e.target.classList.contains('run-btn')) {
+            await runTest(testCard, testId);
+        }
+        else if (e.target.classList.contains('save-btn')) {
+            await saveUserConfig(testCard, testId);
+        }
+        else if (e.target.classList.contains('clear-btn')) {
+            clearOutput(testCard);
+        }
+        else if (e.target.classList.contains('copy-btn')) {
+            copyOutput(testCard);
+        }
+        else if (e.target.classList.contains('wrap-toggle-btn')) {
+            toggleWrap(testCard);
+        }
+        else if (e.target.classList.contains('find-btn')) {
+            openFindModal(testCard);
+        }
+        else if (e.target.classList.contains('scroll-lock-btn')) {
+            toggleScrollLock(testCard);
+        }
+    });
+
+    // Parameter input change detection
+    document.addEventListener('input', (e) => {
+        if (e.target.classList.contains('param-value')) {
+            const testCard = e.target.closest('.test-card');
+            const saveBtn = testCard.querySelector('.save-btn');
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Save*';
+            updateCommandPreview(testCard);
+        }
+    });
+
+    // Initialize command previews
+    document.querySelectorAll('.test-card').forEach(card => {
+        updateCommandPreview(card);
+    });
+
+    async function runTest(testCard, testId) {
+        const runBtn = testCard.querySelector('.run-btn');
+        const outputBox = testCard.querySelector('.output-box');
+        const statusLine = testCard.querySelector('.status-line');
+        const cmdPreview = testCard.querySelector('.cmd-preview');
+        
+        // Disable button and show running state
+        runBtn.disabled = true;
+        runBtn.textContent = 'Running...';
+        statusLine.textContent = 'Running...';
+        
+        // Clear previous output
+        outputBox.textContent = '';
+        
+        // Collect parameters
+        const parameters = [];
+        testCard.querySelectorAll('.param-row').forEach(row => {
+            const name = row.querySelector('.param-name').value;
+            const value = row.querySelector('.param-value').value;
+            if (name) {
+                parameters.push({ Name: name, Value: value });
+            }
+        });
+
+        try {
+            const response = await fetch('/Test?handler=Run', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': token
+                },
+                body: JSON.stringify({
+                    Id: testId,
+                    Parameters: parameters
+                })
+            });
+
+            const result = await response.json();
+            
+            // Update command preview
+            cmdPreview.textContent = result.Command || '(unknown)';
+            
+            // Display output
+            let output = '';
+            if (result.Output) {
+                output += result.Output;
+            }
+            if (result.Error) {
+                output += (output ? '\n' : '') + '=== STDERR ===\n' + result.Error;
+            }
+            
+            outputBox.textContent = output || '(no output)';
+            
+            // Scroll to bottom if not locked
+            if (outputBox.dataset.autoscroll === 'true') {
+                outputBox.scrollTop = outputBox.scrollHeight;
+            }
+            
+            // Update status
+            const duration = result.DurationMs ? ` (${result.DurationMs.toFixed(0)}ms)` : '';
+            if (result.Success) {
+                statusLine.textContent = `Completed successfully. Exit code: ${result.ExitCode}${duration}`;
+                statusLine.className = 'small text-success mt-2';
+            } else {
+                statusLine.textContent = `Failed. Exit code: ${result.ExitCode}${duration}`;
+                statusLine.className = 'small text-danger mt-2';
+            }
+            
+        } catch (error) {
+            outputBox.textContent = `Error: ${error.message}`;
+            statusLine.textContent = 'Request failed';
+            statusLine.className = 'small text-danger mt-2';
+        } finally {
+            runBtn.disabled = false;
+            runBtn.textContent = 'Run';
+        }
+    }
+
+    async function saveUserConfig(testCard, testId) {
+        const saveBtn = testCard.querySelector('.save-btn');
+        
+        // Collect parameters
+        const parameters = [];
+        testCard.querySelectorAll('.param-row').forEach(row => {
+            const name = row.querySelector('.param-name').value;
+            const value = row.querySelector('.param-value').value;
+            if (name) {
+                parameters.push({ Name: name, Value: value });
+            }
+        });
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Saving...';
+
+        try {
+            const response = await fetch('/Test?handler=SaveUserConfig', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'RequestVerificationToken': token
+                },
+                body: JSON.stringify({
+                    Id: testId,
+                    Parameters: parameters
+                })
+            });
+
+            const result = await response.json();
+            
+            if (result.success) {
+                saveBtn.textContent = 'Saved';
+                saveBtn.className = 'btn btn-sm btn-success';
+                setTimeout(() => {
+                    saveBtn.textContent = 'Save';
+                    saveBtn.className = 'btn btn-sm btn-outline-success';
+                    saveBtn.disabled = true;
+                }, 2000);
+            } else {
+                saveBtn.textContent = 'Error';
+                saveBtn.className = 'btn btn-sm btn-danger';
+                setTimeout(() => {
+                    saveBtn.textContent = 'Save';
+                    saveBtn.className = 'btn btn-sm btn-outline-success';
+                }, 2000);
+            }
+        } catch (error) {
+            saveBtn.textContent = 'Error';
+            saveBtn.className = 'btn btn-sm btn-danger';
+            setTimeout(() => {
+                saveBtn.textContent = 'Save';
+                saveBtn.className = 'btn btn-sm btn-outline-success';
+            }, 2000);
+        }
+    }
+
+    function clearOutput(testCard) {
+        const outputBox = testCard.querySelector('.output-box');
+        const statusLine = testCard.querySelector('.status-line');
+        const cmdPreview = testCard.querySelector('.cmd-preview');
+        
+        outputBox.textContent = '';
+        statusLine.textContent = 'Idle';
+        statusLine.className = 'small text-muted mt-2';
+        cmdPreview.textContent = '(idle)';
+    }
+
+    function copyOutput(testCard) {
+        const outputBox = testCard.querySelector('.output-box');
+        const text = outputBox.textContent;
+        
+        if (navigator.clipboard) {
+            navigator.clipboard.writeText(text).then(() => {
+                showTemporaryMessage(testCard, 'Copied to clipboard');
+            });
+        } else {
+            // Fallback for older browsers
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            showTemporaryMessage(testCard, 'Copied to clipboard');
+        }
+    }
+
+    function toggleWrap(testCard) {
+        const wrapBtn = testCard.querySelector('.wrap-toggle-btn');
+        const outputBox = testCard.querySelector('.output-box');
+        const isOn = wrapBtn.dataset.state === 'on';
+        
+        if (isOn) {
+            wrapBtn.dataset.state = 'off';
+            wrapBtn.textContent = 'Wrap: Off';
+            outputBox.classList.remove('wrap-on');
+            outputBox.classList.add('wrap-off');
+        } else {
+            wrapBtn.dataset.state = 'on';
+            wrapBtn.textContent = 'Wrap: On';
+            outputBox.classList.remove('wrap-off');
+            outputBox.classList.add('wrap-on');
+        }
+    }
+
+    function toggleScrollLock(testCard) {
+        const scrollBtn = testCard.querySelector('.scroll-lock-btn');
+        const outputBox = testCard.querySelector('.output-box');
+        const isLocked = scrollBtn.dataset.locked === 'true';
+        
+        if (isLocked) {
+            scrollBtn.dataset.locked = 'false';
+            scrollBtn.textContent = 'Scroll Lock Off';
+            outputBox.dataset.autoscroll = 'true';
+        } else {
+            scrollBtn.dataset.locked = 'true';
+            scrollBtn.textContent = 'Scroll Lock On';
+            outputBox.dataset.autoscroll = 'false';
+        }
+    }
+
+    function updateCommandPreview(testCard) {
+        const scriptPath = testCard.querySelector('.script-path').value;
+        const cmdPreview = testCard.querySelector('.cmd-preview');
+        
+        let command;
+        
+        // Check if this is a Docker command
+        if (scriptPath.toLowerCase().startsWith('docker ')) {
+            // For Docker commands, use the script path as-is and append parameters
+            command = scriptPath;
+            
+            testCard.querySelectorAll('.param-row').forEach(row => {
+                const name = row.querySelector('.param-name').value;
+                const value = row.querySelector('.param-value').value;
+                if (name) {
+                    command += ` -${name}`;
+                    if (value) {
+                        command += ` ${value}`;
+                    }
+                }
+            });
+        } else {
+            // For PowerShell scripts, use the original format
+            command = `powershell -NoProfile -ExecutionPolicy Bypass -File "${scriptPath}"`;
+            
+            testCard.querySelectorAll('.param-row').forEach(row => {
+                const name = row.querySelector('.param-name').value;
+                const value = row.querySelector('.param-value').value;
+                if (name) {
+                    command += ` -p "${name}"`;
+                    if (value) {
+                        command += ` "${value}"`;
+                    }
+                }
+            });
+        }
+        
+        cmdPreview.textContent = command;
+    }
+
+    function showTemporaryMessage(testCard, message) {
+        const statusLine = testCard.querySelector('.status-line');
+        const originalText = statusLine.textContent;
+        const originalClass = statusLine.className;
+        
+        statusLine.textContent = message;
+        statusLine.className = 'small text-info mt-2';
+        
+        setTimeout(() => {
+            statusLine.textContent = originalText;
+            statusLine.className = originalClass;
+        }, 2000);
+    }
+
+    function openFindModal(testCard) {
+        // Simple find functionality - you can enhance this
+        const searchTerm = prompt('Search in output:');
+        if (searchTerm) {
+            const outputBox = testCard.querySelector('.output-box');
+            const text = outputBox.textContent;
+            const index = text.toLowerCase().indexOf(searchTerm.toLowerCase());
+            if (index !== -1) {
+                // Simple highlight - you can make this more sophisticated
+                showTemporaryMessage(testCard, `Found "${searchTerm}" at position ${index}`);
+            } else {
+                showTemporaryMessage(testCard, `"${searchTerm}" not found`);
+            }
+        }
+    }
+});
 </script>
 }
