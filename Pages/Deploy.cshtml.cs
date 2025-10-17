@@ -504,7 +504,7 @@ namespace DevApp.Pages
                     : $"{selectedApp} {selectedBuild} ({environment})";
                 if (envInShortcut && !string.IsNullOrWhiteSpace(environment))
                 {
-                    shortcut.Arguments = $"-Mod {environment} -SubMod {environment}";
+                    shortcut.Arguments = $"-Mode {environment} -Configuration {environment}";
                 }
                 shortcut.Save();
 
