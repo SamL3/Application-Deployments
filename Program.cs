@@ -1,56 +1,44 @@
 using DevApp.Hubs;
 using DevApp.Services;
-using System.Text;
+using DevApp.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// builder.Configuration.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
-builder.Configuration.AddJsonFile("appconfig.json", optional: false, reloadOnChange: true);
+// appsettings*.json and environment variables are loaded by default.
+// Add custom appconfig.json (kept optional to avoid hard crashes on new servers)
+builder.Configuration.AddJsonFile("appconfig.json", optional: true, reloadOnChange: true);
 
-// Services
+// Strongly-typed options + validation
+builder.Services.AddOptions<ApiTestsOptions>()
+    .Bind(builder.Configuration.GetSection("ApiTests"))
+    .Validate(o => o.Items?.Count >= 0, "ApiTests binding failed")
+    .ValidateOnStart();
+
+builder.Services.AddOptions<HostAvailabilityOptions>()
+    .Bind(builder.Configuration.GetSection("HostAvailability"))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 builder.Services.AddRazorPages();
 builder.Services.AddSignalR();
 builder.Services.AddLogging();
 
-// Host availability
 builder.Services.AddSingleton<HostAvailabilityService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<HostAvailabilityService>());
 
 var app = builder.Build();
 
-// Pipeline
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error");
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthorization();
 
 app.MapRazorPages();
 app.MapHub<CopyHub>("/copyHub");
-
-// Simple API endpoints (optional if not using page handlers)
-app.MapGet("/api/hosts/status", (HostAvailabilityService svc) =>
-{
-    var statuses = svc.GetStatuses().Values
-        .OrderBy(s => s.Host, StringComparer.OrdinalIgnoreCase);
-    return Results.Json(new
-    {
-        scanInProgress = svc.ScanInProgress,
-        completed = svc.Completed,
-        total = svc.Total,
-        statuses
-    });
-});
-
-app.MapPost("/api/hosts/refresh", async (HostAvailabilityService svc) =>
-{
-    await svc.TriggerScanAsync();
-    return Results.Accepted("/api/hosts/status");
-});
 
 app.Run();

@@ -56,15 +56,46 @@ else
                             }
                             else
                             {
+                                var idx = 0;
                                 foreach (var p in t.Parameters)
                                 {
-                                    <div class="col-md-4 param-row">
-                                        <div class="input-group input-group-sm">
+                                    // Detect pipe-delimited choices in the parameter value, e.g., "Dev|QA|UAT|Prd"
+                                    var raw = p.Value ?? string.Empty;
+                                    var choices = raw.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                                    var hasChoices = choices.Length > 1;
+                                    var selected = hasChoices ? choices[0] : raw; // default to first choice
+                                    var nameSafe = (p.Name ?? string.Empty).Replace(" ", "_");
+                                    <div class="col-md-4 param-row" data-param-name="@p.Name">
+                                        <div class="input-group input-group-sm align-items-stretch">
                                             <span class="input-group-text" title="@p.Name">@p.Name</span>
                                             <input type="hidden" class="param-name" value="@p.Name" />
-                                            <input class="form-control param-value" value="@p.Value" placeholder="value" />
-                                        </div>  
+                                            @if (hasChoices)
+                                            {
+                                                // Hidden value that Run/Save logic reads
+                                                <input type="hidden" class="param-value" value="@selected" />
+                                                <div class="btn-group flex-wrap ms-1" role="group" aria-label="@p.Name choices">
+                                                    @for (var i = 0; i < choices.Length; i++)
+                                                    {
+                                                        var opt = choices[i];
+                                                        var id = $"opt_{t.Id}_{nameSafe}_{i}_{idx}";
+                                                        <input type="radio"
+                                                               class="btn-check param-choice"
+                                                               name="choice_@t.Id@nameSafe"
+                                                               id="@id"
+                                                               value="@opt"
+                                                               @(opt.Equals(selected, StringComparison.OrdinalIgnoreCase) ? "checked" : null)
+                                                               autocomplete="off" />
+                                                        <label class="btn btn-outline-primary btn-sm m-1" for="@id">@opt</label>
+                                                    }
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <input class="form-control param-value" value="@selected" placeholder="value" />
+                                            }
+                                        </div>
                                     </div>
+                                    idx++;
                                 }
                             }
                         </div>
@@ -107,7 +138,7 @@ else
         background: #f8f9fa; 
         padding: 0.25rem 0.5rem; 
         border-radius: 0.25rem; 
-        color: #198754; /* Bootstrap success green */
+        color: #198754;
         font-weight: 600;
     }
     .run-btn.busy {
@@ -125,6 +156,19 @@ document.addEventListener('DOMContentLoaded', () => {
         return obj[name] ?? obj[name.charAt(0).toLowerCase() + name.slice(1)];
     }
 
+    // NEW: handle single-select button groups for parameters
+    document.addEventListener('change', (e) => {
+        if (e.target.classList.contains('param-choice')) {
+            const row = e.target.closest('.param-row');
+            const hiddenVal = row?.querySelector('.param-value');
+            if (hiddenVal) {
+                hiddenVal.value = e.target.value;
+                // Fire an input event so existing logic enables Save and updates command preview
+                hiddenVal.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        }
+    });
+
     async function runTest(testCard, testId) {
         const runBtn = testCard.querySelector('.run-btn');
         const outputBox = testCard.querySelector('.output-box');
@@ -133,7 +177,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!runBtn) return;
 
-        // Guard to always re-enable
         let completed = false;
 
         runBtn.disabled = true;
@@ -146,7 +189,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const parameters = [];
         testCard.querySelectorAll('.param-row').forEach(row => {
             const name = row.querySelector('.param-name')?.value;
-            const value = row.querySelector('.param-value')?.value;
+            const valueEl = row.querySelector('.param-value');
+            const value = valueEl ? valueEl.value : '';
             if (name) parameters.push({ Name: name, Value: value });
         });
 
@@ -210,7 +254,6 @@ document.addEventListener('DOMContentLoaded', () => {
             runBtn.textContent = 'Run';
         }
 
-        // Safety timeout in case finally is skipped (edge cases)
         setTimeout(() => {
             if (!completed) {
                 runBtn.disabled = false;
@@ -265,7 +308,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const parameters = [];
         testCard.querySelectorAll('.param-row').forEach(row => {
             const name = row.querySelector('.param-name')?.value;
-            const value = row.querySelector('.param-value')?.value;
+            const valueEl = row.querySelector('.param-value');
+            const value = valueEl ? valueEl.value : '';
             if (name) parameters.push({ Name: name, Value: value });
         });
         saveBtn.disabled = true;
@@ -370,7 +414,8 @@ document.addEventListener('DOMContentLoaded', () => {
         let command = scriptPath;
         testCard.querySelectorAll('.param-row').forEach(row => {
             const name = row.querySelector('.param-name')?.value;
-            const value = row.querySelector('.param-value')?.value;
+            const valueEl = row.querySelector('.param-value');
+            const value = valueEl ? valueEl.value : '';
             if (name) {
                 command += ` -${name}`;
                 if (value) command += ` ${value}`;

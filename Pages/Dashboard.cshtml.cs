@@ -10,6 +10,8 @@ using System.Linq;
 using System.Management;
 using DevApp.Models;
 using DevApp.Services;
+using DevApp.Options;
+using Microsoft.Extensions.Options;
 
 namespace DevApp.Pages
 {
@@ -21,18 +23,20 @@ namespace DevApp.Pages
         private readonly HostAvailabilityService _hostSvc;
 
         public DashboardModel(IConfiguration config, IWebHostEnvironment env,
-            ILogger<DashboardModel> logger, HostAvailabilityService hostSvc)
+            ILogger<DashboardModel> logger, HostAvailabilityService hostSvc, IOptionsSnapshot<HostAvailabilityOptions> hostOpts)
         {
             _config = config;
             _env = env;
             _logger = logger;
             _hostSvc = hostSvc;
+            Options = hostOpts.Value;
         }
 
         private bool ShowApps => _config.GetValue<bool>("Dashboard:ShowApps", false);
         private string RootApps => _config["CSTApps"] ?? string.Empty;
 
         public IReadOnlyDictionary<string, HostStatus> HostStatuses => _hostSvc.GetStatuses();
+        public HostAvailabilityOptions Options { get; }
 
         public void OnGet() { }
 
