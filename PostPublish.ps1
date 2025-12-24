@@ -16,10 +16,16 @@ if (Test-Path $localConfig) {
     
     # Recycle app pool
     Write-Host "Recycling DevApp app pool on $RemoteServer..."
-    Invoke-Command -ComputerName $RemoteServer -ScriptBlock {
-        Restart-WebAppPool -Name "DevApp"
+    try {
+        Invoke-Command -ComputerName $RemoteServer -ScriptBlock {
+            Restart-WebAppPool -Name "DevApp"
+        } -ErrorAction Stop
+        Write-Host "App pool recycled"
+    } catch {
+        Write-Host "Could not recycle app pool remotely (WinRM may not be enabled)"
+        Write-Host "Please manually recycle the DevApp app pool on $RemoteServer"
+        Write-Host "Or run: Restart-WebAppPool -Name 'DevApp' on $RemoteServer"
     }
-    Write-Host "App pool recycled"
 } else {
     Write-Host "ERROR: appconfig.json not found at $localConfig" -ForegroundColor Red
     exit 1

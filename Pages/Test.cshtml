@@ -195,7 +195,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         try {
-            const response = await fetch('/Test?handler=Run', {
+            const response = await fetch('/DevApp/Test?handler=Run', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -315,7 +315,7 @@ document.addEventListener('DOMContentLoaded', () => {
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving...';
         try {
-            const response = await fetch('/Test?handler=SaveUserConfig', {
+            const response = await fetch('/DevApp/Test?handler=SaveUserConfig', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

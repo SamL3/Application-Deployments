@@ -298,7 +298,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const results = await Promise.all(servers.map(async s => {
-                const r = await fetch(`/Remove?handler=Deployments&server=${encodeURIComponent(s)}`, { cache:'no-store' });
+                const r = await fetch(`/DevApp/Remove?handler=Deployments&server=${encodeURIComponent(s)}`, { cache:'no-store' });
                 if (!r.ok) throw new Error(`HTTP ${r.status} for ${s}`);
                 const data = await r.json();
                 return { server: s, groups: data || [] };
@@ -410,7 +410,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 fd.append('server', server);
                 ids.forEach(id => fd.append('selectedBuilds', id));
 
-                const r = await fetch('/Remove?handler=RemoveMultipleBuilds', {
+                const r = await fetch('/DevApp/Remove?handler=RemoveMultipleBuilds', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',

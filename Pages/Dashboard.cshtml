@@ -61,7 +61,7 @@ document.addEventListener('DOMContentLoaded', () => {
             scanBar.textContent = 'Starting...';
             scanBar.style.width = '0%';
             scanSummary.textContent = '';
-            await fetch('/Dashboard?handler=RefreshHosts', { method: 'POST' });
+            await fetch('/DevApp/Dashboard?handler=RefreshHosts', { method: 'POST' });
             startPolling(true);
         } catch (e) {
             scanBar.classList.remove('progress-bar-animated');
@@ -79,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function pollOnce() {
         try {
-            const resp = await fetch('/Dashboard?handler=HostStatuses', { cache: 'no-store' });
+            const resp = await fetch('/DevApp/Dashboard?handler=HostStatuses', { cache: 'no-store' });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
             updateProgress(data);
@@ -115,7 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadServers() {
         serversRow.innerHTML = '<div class="col-12 text-center text-muted py-5">Loading servers...</div>';
         try {
-            const resp = await fetch('/Dashboard?handler=Servers', { cache: 'no-store' });
+            const resp = await fetch('/DevApp/Dashboard?handler=Servers', { cache: 'no-store' });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const servers = await resp.json();
             if (!servers || servers.length === 0) {
@@ -185,7 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusLine = card.querySelector('.status-line');
 
         try {
-            const resp = await fetch(`/Dashboard?handler=ServerDetails&server=${encodeURIComponent(hostname)}`, { cache:'no-store' });
+            const resp = await fetch(`/DevApp/Dashboard?handler=ServerDetails&server=${encodeURIComponent(hostname)}`, { cache:'no-store' });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
             const data = await resp.json();
             renderDisks(diskArea, data.disks || []);

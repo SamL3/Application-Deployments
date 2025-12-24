@@ -34,6 +34,7 @@
 
   <ItemGroup>
     <None Include="ApplicationDeployment.csproj" />
+    <None Include="Properties\PublishProfiles\PPCSUSWIIS1.pubxml.user" />
   </ItemGroup>
 
   <ItemGroup>

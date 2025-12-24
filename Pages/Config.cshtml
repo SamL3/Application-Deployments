@@ -237,7 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (hostname) servers.push({ HostName: hostname, UserID: userid, Description: description });
         });
         try {
-            const resp = await fetch('/Config?handler=SaveServers', {
+            const resp = await fetch('/DevApp/Config?handler=SaveServers', {
                 method:'POST',
                 headers:{
                     'Content-Type':'application/json',
@@ -275,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (name && exe) apps.push({ name, exe, envInShortcut });
         });
         try {
-            const resp = await fetch('/Config?handler=SaveApps', {
+            const resp = await fetch('/DevApp/Config?handler=SaveApps', {
                 method:'POST',
                 headers:{
                     'Content-Type':'application/json',
@@ -342,7 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         
         try {
-            const resp = await fetch('/Config?handler=SaveApiTests', {
+            const resp = await fetch('/DevApp/Config?handler=SaveApiTests', {
                 method:'POST',
                 headers:{
                     'Content-Type':'application/json',
@@ -405,7 +405,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusEl = document.getElementById('envStatus');
         statusEl.textContent = 'Saving...';
         try {
-            const resp = await fetch('/Config?handler=SaveEnvironments', {
+            const resp = await fetch('/DevApp/Config?handler=SaveEnvironments', {
                 method:'POST',
                 headers:{
                     'Content-Type':'application/x-www-form-urlencoded',
@@ -428,7 +428,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusEl = document.getElementById('cstAppsRootStatus');
         statusEl.textContent = 'Saving...';
         try {
-            const resp = await fetch('/Config?handler=SaveCstAppsRootPath', {
+            const resp = await fetch('/DevApp/Config?handler=SaveCstAppsRootPath', {
                 method:'POST',
                 headers:{
                     'Content-Type':'application/x-www-form-urlencoded',
@@ -451,7 +451,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusEl = document.getElementById('stagingPathStatus');
         statusEl.textContent = 'Saving...';
         try {
-            const resp = await fetch('/Config?handler=SaveStagingPath', {
+            const resp = await fetch('/DevApp/Config?handler=SaveStagingPath', {
                 method:'POST',
                 headers:{
                     'Content-Type':'application/x-www-form-urlencoded',
@@ -474,7 +474,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const statusEl = document.getElementById('dashboardOptionsStatus');
         statusEl.textContent = 'Saving...';
         try {
-            const resp = await fetch('/Config?handler=SaveDashboardOptions', {
+            const resp = await fetch('/DevApp/Config?handler=SaveDashboardOptions', {
                 method:'POST',
                 headers:{
                     'Content-Type':'application/x-www-form-urlencoded',

@@ -2,7 +2,7 @@
 @model DevApp.Pages.MaintenanceModel
 @using System.Text.Json
 
-<h1 class="mb-3">Maintenance — Configuration Settings</h1>
+<h1 class="mb-3">Maintenance ï¿½ Configuration Settings</h1>
 
 <form id="configForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
@@ -206,7 +206,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         try {
-            const response = await fetch('/Maintenance?handler=SaveStagingPath', {
+            const response = await fetch('/DevApp/Maintenance?handler=SaveStagingPath', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
@@ -268,7 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         try {
-            const response = await fetch('/Maintenance?handler=SaveServers', {
+            const response = await fetch('/DevApp/Maintenance?handler=SaveServers', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -324,7 +324,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         try {
-            const response = await fetch('/Maintenance?handler=SaveApps', {
+            const response = await fetch('/DevApp/Maintenance?handler=SaveApps', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -359,7 +359,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             try {
-                const response = await fetch(`/Maintenance?handler=TestServer&hostname=${encodeURIComponent(hostname)}`);
+                const response = await fetch(`/DevApp/Maintenance?handler=TestServer&hostname=${encodeURIComponent(hostname)}`);
                 const result = await response.json();
                 showStatus(`${hostname}: ${result.message}`, result.success ? 'success' : 'danger');
             } catch (error) {
