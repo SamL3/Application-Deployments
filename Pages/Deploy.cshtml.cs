@@ -54,6 +54,7 @@ namespace DevApp.Pages
             public string Name { get; set; } = string.Empty;
             public string Exe { get; set; } = string.Empty;
             public bool EnvInShortcut { get; set; }
+            public string SubFolder { get; set; } = string.Empty;
         }
 
         public class AppBuildVariant
@@ -193,11 +194,19 @@ namespace DevApp.Pages
                             : new[] { (App: t.App, Build: t.Build, Environment: (string?)null) }))
                     .Select(t => 
                     {
-                        var envInShortcut = _appExes.TryGetValue(t.App, out var e) && e.EnvInShortcut;
-                        var basePath = Path.Combine(staging, t.App, t.Build);
+                        _appExes.TryGetValue(t.App, out var appEntry);
+                        var envInShortcut = appEntry?.EnvInShortcut ?? false;
+                        var subFolder = appEntry?.SubFolder ?? string.Empty;
+                        
+                        // Build base path: staging\Build\SubFolder (if specified)
+                        var basePath = string.IsNullOrEmpty(subFolder)
+                            ? Path.Combine(staging, t.Build)
+                            : Path.Combine(staging, t.Build, subFolder);
+                        
                         var path = (!envInShortcut && t.Environment != null) ? Path.Combine(basePath, t.Environment) : basePath;
                         var exists = Directory.Exists(path);
-                        _logger.LogInformation("Source check: App='{App}', Build='{Build}', Env='{Env}', Path='{Path}', Exists={Exists}", t.App, t.Build, t.Environment ?? "(none)", path, exists);
+                        _logger.LogInformation("Source check: App='{App}', Build='{Build}', Env='{Env}', SubFolder='{SubFolder}', Path='{Path}', Exists={Exists}", 
+                            t.App, t.Build, t.Environment ?? "(none)", subFolder, path, exists);
                         return (t.App, t.Build, t.Environment, exists);
                     })
                     .Where(t => t.exists)
@@ -259,24 +268,42 @@ namespace DevApp.Pages
                 return;
             }
 
-            var appDirs = Directory.GetDirectories(inventoryRoot);
+            // Get all build version directories
+            var buildDirs = Directory.GetDirectories(inventoryRoot);
+            _logger.LogInformation("BuildInventory: Found {Count} build directories in {Path}", buildDirs.Length, inventoryRoot);
 
-            foreach (var appDir in appDirs)
+            // Process each configured app
+            foreach (var kvp in _appExes)
             {
-                var appName = Path.GetFileName(appDir);
-                if (string.IsNullOrWhiteSpace(appName)) continue;
-
-                _appExes.TryGetValue(appName, out var exeEntry);
-                var exeName = exeEntry?.Exe ?? string.Empty;
+                var appName = kvp.Key;
+                var exeEntry = kvp.Value;
+                var exeName = exeEntry.Exe;
+                var subFolder = exeEntry.SubFolder;
+                
+                _logger.LogInformation("BuildInventory: Processing app '{App}' with SubFolder='{SubFolder}', Exe='{Exe}'", appName, subFolder, exeName);
 
                 var variants = new List<AppBuildVariant>();
-                var buildDirs = Directory.GetDirectories(appDir);
+
                 foreach (var buildDir in buildDirs)
                 {
                     var buildName = Path.GetFileName(buildDir);
                     if (string.IsNullOrWhiteSpace(buildName)) continue;
 
-                    var neutralExePath = Path.Combine(buildDir, exeName);
+                    // Construct full path including subfolder if specified
+                    var appBuildPath = string.IsNullOrEmpty(subFolder)
+                        ? buildDir
+                        : Path.Combine(buildDir, subFolder);
+                    
+                    _logger.LogInformation("BuildInventory: Checking path for {App}/{Build}: '{Path}'", appName, buildName, appBuildPath);
+
+                    if (!Directory.Exists(appBuildPath))
+                    {
+                        _logger.LogWarning("BuildInventory: Path does not exist: '{Path}'", appBuildPath);
+                        continue;
+                    }
+
+                    // Check for exe directly in the build path (neutral/no environment)
+                    var neutralExePath = Path.Combine(appBuildPath, exeName);
                     var neutralExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(neutralExePath);
 
                     if (neutralExe)
@@ -285,7 +312,8 @@ namespace DevApp.Pages
                     }
                     else
                     {
-                        var envDirs = Directory.GetDirectories(buildDir);
+                        // Check for environment-specific subdirectories
+                        var envDirs = Directory.GetDirectories(appBuildPath);
                         foreach (var envDir in envDirs)
                         {
                             var envName = Path.GetFileName(envDir);
@@ -309,9 +337,13 @@ namespace DevApp.Pages
                         {
                             try
                             {
+                                var basePath = string.IsNullOrEmpty(subFolder)
+                                    ? Path.Combine(inventoryRoot, v.Build)
+                                    : Path.Combine(inventoryRoot, v.Build, subFolder);
+                                
                                 var path = v.Environment == null
-                                    ? Path.Combine(appDir, v.Build)
-                                    : Path.Combine(appDir, v.Build, v.Environment);
+                                    ? basePath
+                                    : Path.Combine(basePath, v.Environment);
                                 return Directory.GetCreationTime(path);
                             }
                             catch { return DateTime.MinValue; }
@@ -357,9 +389,14 @@ namespace DevApp.Pages
             try
             {
                 var stagingRoot = _config["StagingPath"]!;
-                var envInShortcut = _appExes.TryGetValue(selectedApp, out var entry) && entry.EnvInShortcut;
+                _appExes.TryGetValue(selectedApp, out var entry);
+                var envInShortcut = entry?.EnvInShortcut ?? false;
+                var subFolder = entry?.SubFolder ?? string.Empty;
 
-                var baseSource = Path.Combine(stagingRoot, selectedApp, selectedBuild);
+                // Source path: stagingRoot\Build\SubFolder[\Environment]
+                var baseSource = string.IsNullOrEmpty(subFolder)
+                    ? Path.Combine(stagingRoot, selectedBuild)
+                    : Path.Combine(stagingRoot, selectedBuild, subFolder);
                 var sourcePath = (!envInShortcut && environment != null) ? Path.Combine(baseSource, environment) : baseSource;
 
                 if (!Directory.Exists(sourcePath))
@@ -434,7 +471,7 @@ namespace DevApp.Pages
                 }
 
                 await _hubContext.Clients.Client(hubConnectionId)
-                    .SendAsync("ReceiveMessage", $"Copy summary for {selectedServer} — ok: {copied}, failed: {failed}");
+                    .SendAsync("ReceiveMessage", $"Copy summary for {selectedServer} ï¿½ ok: {copied}, failed: {failed}");
 
                 if (failed == 0)
                 {
@@ -445,7 +482,7 @@ namespace DevApp.Pages
                         var link = ToFileUrl(folder);
                         var name = Path.GetFileName(remoteShortcutPath);
                         await _hubContext.Clients.Client(hubConnectionId)
-                            .SendAsync("ReceiveMessage", $"Shortcut created: {name} — {folder} ({link})");
+                            .SendAsync("ReceiveMessage", $"Shortcut created: {name} ï¿½ {folder} ({link})");
                     }
                 }
                 else

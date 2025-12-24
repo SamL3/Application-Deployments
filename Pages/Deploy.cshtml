@@ -391,7 +391,7 @@
     applyEnvFilter();
 
     // SignalR
-    const connection = new signalR.HubConnectionBuilder().withUrl("/copyHub").build();
+    const connection = new signalR.HubConnectionBuilder().withUrl("/DevApp/copyHub").build();
     connection.on("ReceiveProgress", p => {
         const bar = document.getElementById("progressBar");
         bar.style.width = p + "%";
@@ -452,10 +452,10 @@
         const token = fd.get('__RequestVerificationToken');
         const body = new URLSearchParams(fd).toString();
         
-        console.log('Sending request to:', '/Deploy?handler=Copy');
+        console.log('Sending request to:', '/DevApp/Deploy?handler=Copy');
         console.log('Request body:', body);
 
-        fetch('/Deploy?handler=Copy', {
+        fetch('/DevApp/Deploy?handler=Copy', {
             method:'POST',
             headers:{
                 'Content-Type':'application/x-www-form-urlencoded',

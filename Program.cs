@@ -19,8 +19,7 @@ builder.Services.AddOptions<HostAvailabilityOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
-builder.Services.AddRazorPages()
-    .AddRazorRuntimeCompilation();
+builder.Services.AddRazorPages();
 builder.Services.AddSignalR();
 builder.Services.AddLogging();
 
