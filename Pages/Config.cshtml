@@ -1,7 +1,9 @@
 @page "/Config"
 @model DevApp.Pages.ConfigModel
-
-<h1 class="page-title">Configuration Settings</h1>
+@{
+    ViewData["Title"] = "Config";
+}
+<h1 class="page-title">Configuration</h1>
 
 @if (!string.IsNullOrEmpty(Model.ConfirmationMessage))
 {

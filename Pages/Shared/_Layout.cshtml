@@ -11,23 +11,54 @@
 </head>
 <body>
 <header>
-    <nav class="navbar navbar-expand-lg navbar-light bg-white border-bottom mb-3">
-        <div class="container">
-            <a class="navbar-brand" asp-area="" asp-page="./Dashboard">DevApp</a>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm mb-4">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold fs-4" asp-area="" asp-page="./Dashboard">
+                <i class="fas fa-rocket me-2"></i>DevApp
+            </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav"
                     aria-controls="mainNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="mainNav">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                    <li class="nav-item"><a class="nav-link" asp-page="./Dashboard">Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link" asp-page="./Deploy">Deploy</a></li>
-                    <li class="nav-item"><a class="nav-link" asp-page="./Remove">Remove</a></li>
-                    <li class="nav-item"><a class="nav-link" asp-page="./Test">Test</a></li>
-                    <li class="nav-item"><a class="nav-link" asp-page="./Config">Config</a></li>
+                    <li class="nav-item">
+                        <a class="nav-link @(ViewContext.RouteData.Values["Page"]?.ToString() == "/Dashboard" ? "active" : "")" 
+                           asp-page="./Dashboard">
+                            <i class="fas fa-tachometer-alt me-1"></i>Dashboard
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link @(ViewContext.RouteData.Values["Page"]?.ToString() == "/Deploy" ? "active" : "")" 
+                           asp-page="./Deploy">
+                            <i class="fas fa-upload me-1"></i>Deploy
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link @(ViewContext.RouteData.Values["Page"]?.ToString() == "/Remove" ? "active" : "")" 
+                           asp-page="./Remove">
+                            <i class="fas fa-trash-alt me-1"></i>Remove
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link @(ViewContext.RouteData.Values["Page"]?.ToString() == "/Test" ? "active" : "")" 
+                           asp-page="./Test">
+                            <i class="fas fa-flask me-1"></i>Test
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link @(ViewContext.RouteData.Values["Page"]?.ToString() == "/Config" ? "active" : "")" 
+                           asp-page="./Config">
+                            <i class="fas fa-cog me-1"></i>Config
+                        </a>
+                    </li>
                 </ul>
                 <ul class="navbar-nav">
-                    <li class="nav-item"><a class="nav-link" asp-page="/Privacy"></a></li>
+                    <li class="nav-item">
+                        <span class="navbar-text text-white-50">
+                            <i class="far fa-clock me-1"></i>@DateTime.Now.ToString("MMM dd, yyyy HH:mm")
+                        </span>
+                    </li>
                 </ul>
             </div>
         </div>

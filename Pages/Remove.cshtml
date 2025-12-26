@@ -1,4 +1,4 @@
-﻿@page
+@page
 @using System.Text.Json
 @model DevApp.Pages.RemoveModel
 @{
@@ -6,7 +6,6 @@
     Func<string,bool> isUp = h => Model.ServerAccessibility != null && Model.ServerAccessibility.TryGetValue(h, out var ok) && ok;
 }
 
-<h1>@ViewData["Title"]</h1>
 
 <h1 class="page-title">Remove Applications</h1>
 

@@ -1,4 +1,4 @@
-﻿@page
+@page
 @model DevApp.Pages.DeployModel
 @{
     ViewData["Title"] = "Deploy";
@@ -6,11 +6,10 @@
     Func<string,bool> isUp = h => Model.ServerAccessibility != null && Model.ServerAccessibility.TryGetValue(h, out var ok) && ok;
 }
 
-<h1>@ViewData["Title"]</h1>
 <form id="deploymentForm" method="post" onsubmit="event.preventDefault(); startCopy();" class="my-3">
     @Html.AntiForgeryToken()
     <input type="hidden" id="hubConnectionId" name="HubConnectionId" />
-    <h1 class="page-title">Deploy Applications </h1>
+    <h1 class="page-title">Deploy Applications</h1>
 
     <div class="row g-4">
         <div class="col-lg-4">
