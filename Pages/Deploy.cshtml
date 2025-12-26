@@ -89,8 +89,10 @@
                     <div class="mb-3">
                         <button type="submit" class="btn btn-primary w-100 mb-2">Deploy Selected</button>
                         <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100 mb-2">Clear Selection</button>
-                        <button type="button" id="openRootBtn" class="btn btn-outline-info w-100"
+                        <button type="button" id="openRootBtn" class="btn btn-outline-info w-100 mb-2"
                                 data-path="@Model.StagingPath">Open Root App Folder</button>
+                        <button type="button" id="openShortcutsBtn" class="btn btn-outline-success w-100"
+                                title="Open C:\CSTApps folder">Open Shortcuts Folder</button>
                     </div>
 
                     <div class="small mb-2"><strong>Selected Builds</strong></div>
@@ -235,14 +237,63 @@
             e.preventDefault();
             const p = this.dataset.path || '';
             if (!p) { alert('Root App folder (StagingPath) not configured.'); return; }
+            
+            // For UNC paths, show in prompt for easy copying
             let url = p;
             if (url.startsWith('\\\\')) {
-                url = 'file:' + url.replace(/\\/g, '/'); // -> file://server/share/path
+                // Use prompt which allows easy copy (Ctrl+C)
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(url).then(() => {
+                        alert('Network path copied to clipboard:\n' + url + '\n\nPaste into Windows Explorer address bar (Win+E, Ctrl+V)');
+                    }).catch(() => {
+                        prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', url);
+                    });
+                } else {
+                    prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', url);
+                }
             } else {
-                url = 'file:///' + url.replace(/\\/g, '/'); // -> file:///C:/Path
+                // Local paths might work with file:/// protocol
+                url = 'file:///' + url.replace(/\\/g, '/');
+                const w = window.open(url, '_blank');
+                if (!w) {
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(p).then(() => {
+                            alert('Path copied to clipboard:\n' + p + '\n\nPaste into Windows Explorer (Win+E, Ctrl+V)');
+                        }).catch(() => {
+                            prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', p);
+                        });
+                    } else {
+                        prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', p);
+                    }
+                }
             }
-            try { window.open(url, '_blank'); }
-            catch { alert('Your browser blocked opening local folders.'); }
+        });
+    }
+
+    // Open Shortcuts Folder button
+    const openShortcutsBtn = document.getElementById('openShortcutsBtn');
+    if (openShortcutsBtn) {
+        openShortcutsBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            const shortcutsPath = 'C:\\CSTApps';
+            
+            // Try to open directly with file protocol
+            const url = 'file:///' + shortcutsPath.replace(/\\/g, '/');
+            const w = window.open(url, '_blank');
+            
+            if (!w) {
+                // Browser blocked it, show path for manual copy
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(shortcutsPath).then(() => {
+                        alert(`Shortcuts folder path copied to clipboard:\n${shortcutsPath}\n\nPaste into Windows Explorer (Win+E, Ctrl+V)`);
+                    }).catch(() => {
+                        prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', shortcutsPath);
+                    });
+                } else {
+                    prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', shortcutsPath);
+                }
+            }
         });
     }
 
