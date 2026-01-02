@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<parameters>
+  <parameter name="IIS Web Application Name" description="" value="https://ppcsuswiis1/DevApp" tags="IisApp">
+    <parameterEntry kind="ProviderPath" scope="IisApp" match="^C:\\Projects\\SRC\\SamL3\\Application-Deployments\\obj\\Release\\net8\.0-windows10\.0\.19041\.0\\PubTmp\\Out\\$" />
+  </parameter>
+</parameters>

@@ -272,6 +272,12 @@ namespace DevApp.Pages
             var buildDirs = Directory.GetDirectories(inventoryRoot);
             _logger.LogInformation("BuildInventory: Found {Count} build directories in {Path}", buildDirs.Length, inventoryRoot);
 
+            if (_appExes == null || _appExes.Count == 0)
+            {
+                _logger.LogError("BuildInventory: No AppExes configured in appconfig.json. AppExes count: {Count}. Please add AppExes section with Name, Exe, SubFolder, and EnvInShortcut properties.", _appExes?.Count ?? 0);
+                return;
+            }
+
             // Process each configured app
             foreach (var kvp in _appExes)
             {
@@ -605,6 +611,71 @@ namespace DevApp.Pages
         {
             // Show the configured staging root path used to find builds
             return _config["StagingPath"] ?? string.Empty;
+        }
+
+        public IActionResult OnGetDiagnostics()
+        {
+            var diagnostics = new List<string>();
+            
+            try
+            {
+                var stagingPath = _config["StagingPath"] ?? "(not configured)";
+                diagnostics.Add($"StagingPath: {stagingPath}");
+                
+                diagnostics.Add($"Current User: {Environment.UserName}");
+                diagnostics.Add($"Machine Name: {Environment.MachineName}");
+                diagnostics.Add($"App Running: Yes");
+                
+                if (!string.IsNullOrWhiteSpace(stagingPath) && stagingPath != "(not configured)")
+                {
+                    try
+                    {
+                        var exists = Directory.Exists(stagingPath);
+                        diagnostics.Add($"StagingPath Exists: {exists}");
+                        
+                        if (exists)
+                        {
+                            var dirs = Directory.GetDirectories(stagingPath);
+                            diagnostics.Add($"Build Directories Found: {dirs.Length}");
+                            if (dirs.Length > 0)
+                            {
+                                diagnostics.Add($"Sample Builds: {string.Join(", ", dirs.Select(Path.GetFileName).Take(5))}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        diagnostics.Add($"ERROR accessing StagingPath: {ex.GetType().Name}: {ex.Message}");
+                    }
+                }
+                
+                diagnostics.Add($"AppExes Configured: {_appExes?.Count ?? 0}");
+                if (_appExes != null && _appExes.Count > 0)
+                {
+                    foreach (var kvp in _appExes)
+                    {
+                        diagnostics.Add($"  - {kvp.Key}: Exe={kvp.Value.Exe}, SubFolder={kvp.Value.SubFolder}, EnvInShortcut={kvp.Value.EnvInShortcut}");
+                    }
+                }
+                else
+                {
+                    diagnostics.Add("ERROR: AppExes section is missing or empty in appconfig.json!");
+                    diagnostics.Add("Add this to appconfig.json:");
+                    diagnostics.Add("  \"AppExes\": [");
+                    diagnostics.Add("    { \"Name\": \"Admin\", \"Exe\": \"CST.Host.App.exe\", \"SubFolder\": \"Client\\\\CST.Host.App\", \"EnvInShortcut\": true },");
+                    diagnostics.Add("    { \"Name\": \"TIM\", \"Exe\": \"CST.TIM.App.exe\", \"SubFolder\": \"Client\\\\CST.TIM.App\", \"EnvInShortcut\": true }");
+                    diagnostics.Add("  ]");
+                }
+                
+                diagnostics.Add($"AppBuildGroups Loaded: {AppBuildGroups?.Count ?? 0}");
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"DIAGNOSTIC ERROR: {ex.GetType().Name}: {ex.Message}");
+                diagnostics.Add($"Stack: {ex.StackTrace}");
+            }
+            
+            return new JsonResult(new { diagnostics });
         }
 
         private bool IsServerAccessible(string host, string? root)
