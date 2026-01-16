@@ -49,12 +49,25 @@ namespace DevApp.Pages
         public string StagingPath { get; private set; } = string.Empty; // UNC source builds
         public string CstAppsRootPath { get; private set; } = string.Empty; // Destination root on targets
 
+        private sealed class ProductConfig
+        {
+            public string Name { get; set; } = string.Empty;
+            public string SubFolder { get; set; } = string.Empty;
+            public string Type { get; set; } = "Standard"; // Standard or MSIX
+            public bool RequiresEnvironment { get; set; }
+            public List<AppExeEntry> Apps { get; set; } = new();
+        }
+
         private sealed class AppExeEntry
         {
             public string Name { get; set; } = string.Empty;
             public string Exe { get; set; } = string.Empty;
             public bool EnvInShortcut { get; set; }
             public string SubFolder { get; set; } = string.Empty;
+            public string? ProductName { get; set; } // Which product this app belongs to
+            public string? ProductSubFolder { get; set; } // Product's subfolder
+            public string? ProductType { get; set; } // Standard or MSIX
+            public bool ProductRequiresEnvironment { get; set; } // Does product require environment in path
         }
 
         public class AppBuildVariant
@@ -70,6 +83,8 @@ namespace DevApp.Pages
         {
             public string AppName { get; set; } = string.Empty;
             public List<AppBuildVariant> Variants { get; set; } = new();
+            public string? ProductType { get; set; } // Standard or MSIX
+            public bool RequiresEnvironment { get; set; }
         }
 
         [BindProperty] public List<SelectListItem> Servers { get; set; } = new();
@@ -81,6 +96,7 @@ namespace DevApp.Pages
         public List<SelectListItem> Environments { get; set; } = new();
 
         public List<AppBuildGroup> AppBuildGroups { get; set; } = new();
+        public List<AppBuildGroup> MSIXBuildGroups { get; set; } = new(); // Separate list for MSIX packages
 
         public void OnGet()
         {
@@ -197,16 +213,40 @@ namespace DevApp.Pages
                         _appExes.TryGetValue(t.App, out var appEntry);
                         var envInShortcut = appEntry?.EnvInShortcut ?? false;
                         var subFolder = appEntry?.SubFolder ?? string.Empty;
+                        var productSubFolder = appEntry?.ProductSubFolder ?? string.Empty;
+                        var requiresEnv = appEntry?.ProductRequiresEnvironment ?? false;
+                        var productType = appEntry?.ProductType ?? "Standard";
                         
-                        // Build base path: staging\Build\SubFolder (if specified)
-                        var basePath = string.IsNullOrEmpty(subFolder)
-                            ? Path.Combine(staging, t.Build)
-                            : Path.Combine(staging, t.Build, subFolder);
+                        // Build source path based on product structure
+                        string path;
+                        bool exists;
                         
-                        var path = (!envInShortcut && t.Environment != null) ? Path.Combine(basePath, t.Environment) : basePath;
-                        var exists = Directory.Exists(path);
-                        _logger.LogInformation("Source check: App='{App}', Build='{Build}', Env='{Env}', SubFolder='{SubFolder}', Path='{Path}', Exists={Exists}", 
-                            t.App, t.Build, t.Environment ?? "(none)", subFolder, path, exists);
+                        if (requiresEnv && t.Environment != null && productType == "MSIX")
+                        {
+                            // For MSIX: t.Build is the filename (without extension)
+                            // Path: staging\ProductSubFolder\Environment\{filename}.msix
+                            path = Path.Combine(staging, productSubFolder, t.Environment, t.Build + ".msix");
+                            exists = System.IO.File.Exists(path);
+                        }
+                        else if (requiresEnv && t.Environment != null)
+                        {
+                            // Path: staging\ProductSubFolder\Environment\Build\SubFolder
+                            var basePath = Path.Combine(staging, productSubFolder, t.Environment, t.Build);
+                            path = string.IsNullOrEmpty(subFolder) ? basePath : Path.Combine(basePath, subFolder);
+                            exists = Directory.Exists(path);
+                        }
+                        else
+                        {
+                            // Path: staging\ProductSubFolder\Build\SubFolder[\Environment]
+                            var basePath = string.IsNullOrEmpty(subFolder)
+                                ? Path.Combine(staging, productSubFolder, t.Build)
+                                : Path.Combine(staging, productSubFolder, t.Build, subFolder);
+                            path = (!envInShortcut && t.Environment != null) ? Path.Combine(basePath, t.Environment) : basePath;
+                            exists = Directory.Exists(path);
+                        }
+                        
+                        _logger.LogInformation("Source check: App='{App}', Build='{Build}', Env='{Env}', Product='{Product}', Type='{Type}', Path='{Path}', Exists={Exists}", 
+                            t.App, t.Build, t.Environment ?? "(none)", productSubFolder, productType, path, exists);
                         return (t.App, t.Build, t.Environment, exists);
                     })
                     .Where(t => t.exists)
@@ -256,6 +296,7 @@ namespace DevApp.Pages
         {
             var sw = Stopwatch.StartNew();
             AppBuildGroups = new List<AppBuildGroup>();
+            MSIXBuildGroups = new List<AppBuildGroup>();
 
             var inventoryRoot = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
             _logger.LogInformation("BuildInventory: inventoryRoot={Path}", inventoryRoot);
@@ -268,13 +309,22 @@ namespace DevApp.Pages
                 return;
             }
 
-            // Get all build version directories
-            var buildDirs = Directory.GetDirectories(inventoryRoot);
-            _logger.LogInformation("BuildInventory: Found {Count} build directories in {Path}", buildDirs.Length, inventoryRoot);
+            // Get all build version directories or product directories
+            string[] buildDirs;
+            try
+            {
+                buildDirs = Directory.GetDirectories(inventoryRoot);
+                _logger.LogInformation("BuildInventory: Found {Count} directories in {Path}", buildDirs.Length, inventoryRoot);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "BuildInventory: Failed to read directories from {Path}. Check permissions.", inventoryRoot);
+                return;
+            }
 
             if (_appExes == null || _appExes.Count == 0)
             {
-                _logger.LogError("BuildInventory: No AppExes configured in appconfig.json. AppExes count: {Count}. Please add AppExes section with Name, Exe, SubFolder, and EnvInShortcut properties.", _appExes?.Count ?? 0);
+                _logger.LogError("BuildInventory: No AppExes configured in appconfig.json. AppExes count: {Count}. Please add Products section.", _appExes?.Count ?? 0);
                 return;
             }
 
@@ -285,52 +335,106 @@ namespace DevApp.Pages
                 var exeEntry = kvp.Value;
                 var exeName = exeEntry.Exe;
                 var subFolder = exeEntry.SubFolder;
+                var productSubFolder = exeEntry.ProductSubFolder ?? "";
+                var requiresEnv = exeEntry.ProductRequiresEnvironment;
+                var productType = exeEntry.ProductType ?? "Standard";
                 
-                _logger.LogInformation("BuildInventory: Processing app '{App}' with SubFolder='{SubFolder}', Exe='{Exe}'", appName, subFolder, exeName);
+                _logger.LogInformation("BuildInventory: Processing app '{App}' Product='{Product}', Type='{Type}', RequiresEnv={RequiresEnv}", 
+                    appName, exeEntry.ProductName ?? "None", productType, requiresEnv);
 
                 var variants = new List<AppBuildVariant>();
 
-                foreach (var buildDir in buildDirs)
+                // For products that require environment (like WinMobile), look in environment folders first
+                if (requiresEnv)
                 {
-                    var buildName = Path.GetFileName(buildDir);
-                    if (string.IsNullOrWhiteSpace(buildName)) continue;
-
-                    // Construct full path including subfolder if specified
-                    var appBuildPath = string.IsNullOrEmpty(subFolder)
-                        ? buildDir
-                        : Path.Combine(buildDir, subFolder);
+                    // Path: inventoryRoot\ProductSubFolder\Environment\{MSIX files directly here}
+                    var productPath = Path.Combine(inventoryRoot, productSubFolder);
                     
-                    _logger.LogInformation("BuildInventory: Checking path for {App}/{Build}: '{Path}'", appName, buildName, appBuildPath);
-
-                    if (!Directory.Exists(appBuildPath))
+                    if (!Directory.Exists(productPath))
                     {
-                        _logger.LogWarning("BuildInventory: Path does not exist: '{Path}'", appBuildPath);
+                        _logger.LogWarning("BuildInventory: Product path does not exist: '{Path}'", productPath);
                         continue;
                     }
 
-                    // Check for exe directly in the build path (neutral/no environment)
-                    var neutralExePath = Path.Combine(appBuildPath, exeName);
-                    var neutralExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(neutralExePath);
+                    var envDirs = Directory.GetDirectories(productPath);
+                    _logger.LogInformation("BuildInventory: Found {Count} environment directories in {Path}", envDirs.Length, productPath);
 
-                    if (neutralExe)
+                    foreach (var envDir in envDirs)
                     {
-                        variants.Add(new AppBuildVariant { Build = buildName, Environment = null });
-                    }
-                    else
-                    {
-                        // Check for environment-specific subdirectories
-                        var envDirs = Directory.GetDirectories(appBuildPath);
-                        foreach (var envDir in envDirs)
+                        var envName = Path.GetFileName(envDir);
+                        if (string.IsNullOrWhiteSpace(envName)) continue;
+
+                        // For MSIX, files are directly in the environment folder
+                        var msixFiles = Directory.GetFiles(envDir, exeName, SearchOption.TopDirectoryOnly);
+                        
+                        _logger.LogInformation("BuildInventory: Found {Count} MSIX files in {Env}", msixFiles.Length, envName);
+                        
+                        foreach (var msixFile in msixFiles)
                         {
-                            var envName = Path.GetFileName(envDir);
-                            if (string.IsNullOrWhiteSpace(envName)) continue;
+                            var fileName = Path.GetFileName(msixFile);
+                            // Use filename (without extension) as the "build" identifier
+                            var buildName = Path.GetFileNameWithoutExtension(fileName);
+                            
+                            variants.Add(new AppBuildVariant { Build = buildName, Environment = envName });
+                            _logger.LogInformation("BuildInventory: Found {App} MSIX: {FileName} in {Env}", appName, fileName, envName);
+                        }
+                    }
+                }
+                else
+                {
+                    // Standard products: inventoryRoot\ProductSubFolder\Build\SubFolder
+                    var productPath = Path.Combine(inventoryRoot, productSubFolder);
+                    
+                    if (!Directory.Exists(productPath))
+                    {
+                        _logger.LogWarning("BuildInventory: Product path does not exist: '{Path}'", productPath);
+                        continue;
+                    }
 
-                            var envExePath = Path.Combine(envDir, exeName);
-                            var hasExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(envExePath);
+                    var productBuildDirs = Directory.GetDirectories(productPath);
 
-                            if (hasExe)
+                    foreach (var buildDir in productBuildDirs)
+                    {
+                        var buildName = Path.GetFileName(buildDir);
+                        if (string.IsNullOrWhiteSpace(buildName)) continue;
+
+                        // Construct full path including subfolder if specified
+                        var appBuildPath = string.IsNullOrEmpty(subFolder)
+                            ? buildDir
+                            : Path.Combine(buildDir, subFolder);
+                        
+                        _logger.LogInformation("BuildInventory: Checking path for {App}/{Build}: '{Path}'", appName, buildName, appBuildPath);
+
+                        if (!Directory.Exists(appBuildPath))
+                        {
+                            _logger.LogWarning("BuildInventory: Path does not exist: '{Path}'", appBuildPath);
+                            continue;
+                        }
+
+                        // Check for exe directly in the build path (neutral/no environment)
+                        var neutralExePath = Path.Combine(appBuildPath, exeName);
+                        var neutralExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(neutralExePath);
+
+                        if (neutralExe)
+                        {
+                            variants.Add(new AppBuildVariant { Build = buildName, Environment = null });
+                        }
+                        else
+                        {
+                            // Check for environment-specific subdirectories
+                            var envDirs = Directory.GetDirectories(appBuildPath);
+                            foreach (var envDir in envDirs)
                             {
-                                variants.Add(new AppBuildVariant { Build = buildName, Environment = envName });
+                                var envName = Path.GetFileName(envDir);
+                                if (string.IsNullOrWhiteSpace(envName)) continue;
+
+                                var envExePath = Path.Combine(envDir, exeName);
+                                var hasExe = !string.IsNullOrEmpty(exeName) && System.IO.File.Exists(envExePath);
+
+                                if (hasExe)
+                                {
+                                    variants.Add(new AppBuildVariant { Build = buildName, Environment = envName });
+                                }
                             }
                         }
                     }
@@ -343,28 +447,56 @@ namespace DevApp.Pages
                         {
                             try
                             {
-                                var basePath = string.IsNullOrEmpty(subFolder)
-                                    ? Path.Combine(inventoryRoot, v.Build)
-                                    : Path.Combine(inventoryRoot, v.Build, subFolder);
+                                string path;
                                 
-                                var path = v.Environment == null
-                                    ? basePath
-                                    : Path.Combine(basePath, v.Environment);
-                                return Directory.GetCreationTime(path);
+                                if (requiresEnv && v.Environment != null)
+                                {
+                                    // For MSIX: v.Build is the filename, get file creation time
+                                    // Path: inventoryRoot\ProductSubFolder\Environment\{filename}.msix
+                                    var msixFilePath = Path.Combine(inventoryRoot, productSubFolder, v.Environment, v.Build + ".msix");
+                                    if (System.IO.File.Exists(msixFilePath))
+                                    {
+                                        return System.IO.File.GetCreationTime(msixFilePath);
+                                    }
+                                    return DateTime.MinValue;
+                                }
+                                else
+                                {
+                                    // Standard product: use directory creation time
+                                    var basePath = string.IsNullOrEmpty(subFolder)
+                                        ? Path.Combine(inventoryRoot, productSubFolder, v.Build)
+                                        : Path.Combine(inventoryRoot, productSubFolder, v.Build, subFolder);
+                                    path = v.Environment == null ? basePath : Path.Combine(basePath, v.Environment);
+                                    return Directory.GetCreationTime(path);
+                                }
                             }
                             catch { return DateTime.MinValue; }
                         })
+                        .Take(10) // Limit to 10 most recent builds
                         .ToList();
 
-                    AppBuildGroups.Add(new AppBuildGroup
+                    var buildGroup = new AppBuildGroup
                     {
                         AppName = appName,
-                        Variants = variants
-                    });
+                        Variants = variants,
+                        ProductType = productType,
+                        RequiresEnvironment = requiresEnv
+                    };
+
+                    // Separate MSIX from Standard apps
+                    if (productType == "MSIX")
+                    {
+                        MSIXBuildGroups.Add(buildGroup);
+                    }
+                    else
+                    {
+                        AppBuildGroups.Add(buildGroup);
+                    }
                 }
             }
 
             AppBuildGroups = AppBuildGroups.OrderBy(g => g.AppName).ToList();
+            MSIXBuildGroups = MSIXBuildGroups.OrderBy(g => g.AppName).ToList();
 
             // Keep Model.Environments exactly as loaded from configuration; do not augment with disk findings.
 
@@ -398,12 +530,74 @@ namespace DevApp.Pages
                 _appExes.TryGetValue(selectedApp, out var entry);
                 var envInShortcut = entry?.EnvInShortcut ?? false;
                 var subFolder = entry?.SubFolder ?? string.Empty;
+                var productSubFolder = entry?.ProductSubFolder ?? string.Empty;
+                var requiresEnv = entry?.ProductRequiresEnvironment ?? false;
+                var productType = entry?.ProductType ?? "Standard";
 
-                // Source path: stagingRoot\Build\SubFolder[\Environment]
-                var baseSource = string.IsNullOrEmpty(subFolder)
-                    ? Path.Combine(stagingRoot, selectedBuild)
-                    : Path.Combine(stagingRoot, selectedBuild, subFolder);
-                var sourcePath = (!envInShortcut && environment != null) ? Path.Combine(baseSource, environment) : baseSource;
+                // Build source path based on product structure
+                string sourcePath;
+                bool isMSIXFile = false;
+                
+                if (requiresEnv && environment != null && productType == "MSIX")
+                {
+                    // For MSIX: selectedBuild is the filename (without extension)
+                    // Path: stagingRoot\ProductSubFolder\Environment\{filename}.msix
+                    sourcePath = Path.Combine(stagingRoot, productSubFolder, environment, selectedBuild + ".msix");
+                    isMSIXFile = true;
+                }
+                else if (requiresEnv && environment != null)
+                {
+                    // Path: stagingRoot\ProductSubFolder\Environment\Build\SubFolder
+                    var basePath = Path.Combine(stagingRoot, productSubFolder, environment, selectedBuild);
+                    sourcePath = string.IsNullOrEmpty(subFolder) ? basePath : Path.Combine(basePath, subFolder);
+                }
+                else
+                {
+                    // Path: stagingRoot\ProductSubFolder\Build\SubFolder[\Environment]
+                    var basePath = string.IsNullOrEmpty(subFolder)
+                        ? Path.Combine(stagingRoot, productSubFolder, selectedBuild)
+                        : Path.Combine(stagingRoot, productSubFolder, selectedBuild, subFolder);
+                    sourcePath = (!envInShortcut && environment != null) ? Path.Combine(basePath, environment) : basePath;
+                }
+
+                // Handle MSIX file copy differently
+                if (isMSIXFile)
+                {
+                    if (!System.IO.File.Exists(sourcePath))
+                    {
+                        await _hubContext.Clients.Client(hubConnectionId)
+                            .SendAsync("ReceiveError", $"MSIX file not found: {sourcePath}");
+                        return;
+                    }
+
+                    var msixCstAppsRoot = _config["CSTApps"] ?? "CSTApps";
+                    var destFolder = $@"\\{selectedServer}\C$\{msixCstAppsRoot}\MSIX";
+                    var destFile = Path.Combine(destFolder, Path.GetFileName(sourcePath));
+
+                    try { Directory.CreateDirectory(destFolder); }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to create MSIX destination folder {Dest}", destFolder);
+                        await _hubContext.Clients.Client(hubConnectionId)
+                            .SendAsync("ReceiveError", $"Cannot create MSIX folder: {destFolder} ({ex.Message})");
+                        return;
+                    }
+
+                    try
+                    {
+                        System.IO.File.Copy(sourcePath, destFile, true);
+                        await _hubContext.Clients.Client(hubConnectionId)
+                            .SendAsync("ReceiveMessage", $"MSIX copied: {Path.GetFileName(sourcePath)} to {selectedServer}");
+                        await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveProgress", 100);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed copying MSIX {Source} to {Dest}", sourcePath, destFile);
+                        await _hubContext.Clients.Client(hubConnectionId)
+                            .SendAsync("ReceiveError", $"MSIX copy failed: {ex.Message}");
+                    }
+                    return;
+                }
 
                 if (!Directory.Exists(sourcePath))
                 {
@@ -575,14 +769,51 @@ namespace DevApp.Pages
 
         private Dictionary<string, AppExeEntry> LoadAppExesFromConfig()
         {
-            // Example: expects "AppExes" section in appconfig.json
+            // Try new Products structure first
+            var productsSection = _config.GetSection("Products");
+            var products = productsSection.Get<List<ProductConfig>>();
+            
+            if (products != null && products.Count > 0)
+            {
+                _logger.LogInformation("LoadAppExesFromConfig: Loading from Products structure. Found {Count} products", products.Count);
+                
+                var appDict = new Dictionary<string, AppExeEntry>(StringComparer.OrdinalIgnoreCase);
+                
+                foreach (var product in products)
+                {
+                    _logger.LogInformation("LoadAppExesFromConfig: Processing product '{Product}' with {AppCount} apps", 
+                        product.Name, product.Apps?.Count ?? 0);
+                    
+                    if (product.Apps == null) continue;
+                    
+                    foreach (var app in product.Apps)
+                    {
+                        if (string.IsNullOrWhiteSpace(app.Name) || string.IsNullOrWhiteSpace(app.Exe))
+                            continue;
+                        
+                        // Enrich app with product information
+                        app.ProductName = product.Name;
+                        app.ProductSubFolder = product.SubFolder;
+                        app.ProductType = product.Type;
+                        app.ProductRequiresEnvironment = product.RequiresEnvironment;
+                        
+                        appDict[app.Name] = app;
+                    }
+                }
+                
+                return appDict;
+            }
+            
+            // Fallback to legacy AppExes structure
             var section = _config.GetSection("AppExes");
             var entries = section.Get<List<AppExeEntry>>();
             if (entries == null)
             {
-                _logger.LogWarning("LoadAppExesFromConfig: AppExes section missing or empty in appconfig.json");
+                _logger.LogWarning("LoadAppExesFromConfig: Neither Products nor AppExes section found in appconfig.json");
                 return new Dictionary<string, AppExeEntry>(StringComparer.OrdinalIgnoreCase);
             }
+            
+            _logger.LogInformation("LoadAppExesFromConfig: Using legacy AppExes structure. Found {Count} apps", entries.Count);
             return entries
                 .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Exe))
                 .ToDictionary(e => e.Name, e => e, StringComparer.OrdinalIgnoreCase);
@@ -667,7 +898,8 @@ namespace DevApp.Pages
                     diagnostics.Add("  ]");
                 }
                 
-                diagnostics.Add($"AppBuildGroups Loaded: {AppBuildGroups?.Count ?? 0}");
+                diagnostics.Add($"Standard AppBuildGroups Loaded: {AppBuildGroups?.Count ?? 0}");
+                diagnostics.Add($"MSIX BuildGroups Loaded: {MSIXBuildGroups?.Count ?? 0}");
             }
             catch (Exception ex)
             {

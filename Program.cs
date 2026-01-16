@@ -35,6 +35,20 @@ if (!app.Environment.IsDevelopment())
 }
 
 app.UseStaticFiles();
+
+// Add static files serving with explicit file extension content type mapping
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider
+    {
+        Mappings =
+        {
+            [".msix"] = "application/msix",
+            [".appinstaller"] = "application/appinstaller"
+        }
+    }
+});
+
 app.UseRouting();
 app.UseAuthorization();
 

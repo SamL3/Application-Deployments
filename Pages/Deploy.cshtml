@@ -111,6 +111,62 @@
 
         <!-- Apps grid on the right, rendered similar to Remove -->
         <div class="col-lg-8">
+            <!-- MSIX Packages Card (WinMobile) -->
+            @if (Model.MSIXBuildGroups != null && Model.MSIXBuildGroups.Count > 0)
+            {
+                <div class="card shadow-sm mb-3">
+                    <div class="card-header bg-success text-white">
+                        <strong>MSIX Packages (WinMobile)</strong>
+                    </div>
+                    <div class="card-body p-2" style="max-height:30vh; overflow:auto;">
+                        <div class="row row-cols-1 g-2">
+                            @foreach (var group in Model.MSIXBuildGroups)
+                            {
+                                <div class="col">
+                                    <div class="card">
+                                        <div class="card-header small fw-semibold d-flex justify-content-between align-items-center py-1">
+                                            <span>@group.AppName</span>
+                                            <span class="badge bg-secondary">@group.Variants.Count</span>
+                                        </div>
+                                        <div class="card-body p-2">
+                                            @if (group.Variants.Count == 0)
+                                            {
+                                                <div class="small text-muted">No builds</div>
+                                            }
+                                            else
+                                            {
+                                                <div class="list-group list-group-flush msix-builds-list" style="max-height: 320px; overflow-y: auto;">
+                                                    @foreach (var v in group.Variants)
+                                                    {
+                                                        var radioId = $"radio_msix_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
+                                                        <label class="list-group-item list-group-item-action py-2 px-3 d-flex align-items-center build-row-msix" 
+                                                               for="@radioId"
+                                                               data-app="@group.AppName"
+                                                               data-build="@v.Build"
+                                                               data-env="@v.Environment">
+                                                            <input class="form-check-input me-2 msix-radio"
+                                                                   type="radio"
+                                                                   id="@radioId"
+                                                                   name="MSIXSelection"
+                                                                   value="@v.SelectionValue(group.AppName)"
+                                                                   data-app="@group.AppName"
+                                                                   data-build="@v.Build"
+                                                                   data-env="@v.Environment" />
+                                                            <span class="small">@v.Display</span>
+                                                        </label>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <!-- Standard Apps Grid -->
             <div class="row row-cols-1 row-cols-md-2 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
                 @if (Model.AppBuildGroups == null || Model.AppBuildGroups.Count == 0)
                 {
@@ -135,38 +191,34 @@
                                     }
                                     else
                                     {
-                                        <table class="table table-sm table-hover builds-table mb-0">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th scope="col" style="width:50px;">
-                                                        <input type="checkbox"
-                                                               class="form-check-input app-select-all"
-                                                               data-app="@group.AppName"
-                                                               title="Select All Builds for @group.AppName">
-                                                    </th>
-                                                    <th scope="col">Build</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
+                                        <div style="max-height: 320px; overflow-y: auto;">
+                                            <table class="table table-sm table-hover builds-table mb-0">
+                                                <thead class="table-light sticky-top">
+                                                    <tr>
+                                                        <th scope="col" style="width:50px;"></th>
+                                                        <th scope="col">Build</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
                                                 @foreach (var v in group.Variants)
                                                 {
-                                                    var chkId = $"chk_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
+                                                    var radioId = $"radio_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
                                                     <tr class="build-row"
                                                         data-app="@group.AppName"
                                                         data-build="@v.Build"
                                                         data-env="@v.Environment">
                                                         <td>
-                                                            <input class="form-check-input build-checkbox"
-                                                                   type="checkbox"
-                                                                   id="@chkId"
-                                                                   name="Selections"
+                                                            <input class="form-check-input build-radio"
+                                                                   type="radio"
+                                                                   id="@radioId"
+                                                                   name="StandardSelection"
                                                                    value="@v.SelectionValue(group.AppName)"
                                                                    data-app="@group.AppName"
                                                                    data-build="@v.Build"
                                                                    data-env="@v.Environment" />
                                                         </td>
                                                         <td class="text-wrap">
-                                                            <label class="form-check-label small text-wrap" for="@chkId" title="@v.Display">
+                                                            <label class="form-check-label small text-wrap" for="@radioId" title="@v.Display">
                                                                 @v.Display
                                                             </label>
                                                         </td>
@@ -174,6 +226,7 @@
                                                 }
                                             </tbody>
                                         </table>
+                                        </div>
                                     }
                                 </div>
                             </div>
@@ -340,106 +393,146 @@
     }));
     updateServerRowStyles(); updateSelectAllState(); updateSelectedServersInfo();
 
-    // Build selection helpers (similar to Remove)
-    const appSelectAllCheckboxes = document.querySelectorAll('.app-select-all');
-    const buildCheckboxes = document.querySelectorAll('.build-checkbox');
+    // Environment filtering for MSIX builds
+    function filterMSIXBuilds() {
+        const selectedEnvs = Array.from(document.querySelectorAll('input[name="SelectedEnvironments"]:checked')).map(e => e.value);
+        console.log('filterMSIXBuilds called - Selected envs:', selectedEnvs);
+        
+        let hiddenCount = 0;
+        let shownCount = 0;
+        
+        document.querySelectorAll('.build-row-msix').forEach(row => {
+            const rowEnv = row.dataset.env;
+            console.log('Row env:', rowEnv, 'Display:', row.style.display);
+            // Only show builds if their environment is selected (case-insensitive match)
+            const shouldShow = selectedEnvs.length > 0 && selectedEnvs.some(env => env.toLowerCase() === rowEnv?.toLowerCase());
+            
+            if (shouldShow) {
+                row.style.display = 'flex'; // Use flex instead of empty string to force visibility
+                row.classList.remove('d-none');
+                shownCount++;
+            } else {
+                row.style.display = 'none';
+                row.classList.add('d-none');
+                hiddenCount++;
+                // Uncheck if hidden
+                const radio = row.querySelector('.msix-radio');
+                if (radio && radio.checked) {
+                    radio.checked = false;
+                }
+            }
+        });
+        
+        console.log(`MSIX Builds - Shown: ${shownCount}, Hidden: ${hiddenCount}`);
+        
+        // Update MSIX card visibility - hide if no builds are shown
+        const msixCard = document.querySelector('.card.shadow-sm.mb-3');
+        if (msixCard && msixCard.querySelector('.card-header.bg-success')) {
+            if (shownCount === 0) {
+                msixCard.style.display = 'none';
+            } else {
+                msixCard.style.display = '';
+            }
+        }
+        
+        refreshSelectionSummary();
+    }
+
+    // Environment button changes
+    document.querySelectorAll('input[name="SelectedEnvironments"]').forEach(envBtn => {
+        envBtn.addEventListener('change', filterMSIXBuilds);
+    });
+
+    // Build selection helpers - now for radio buttons
+    const buildRadios = document.querySelectorAll('.build-radio');
+    const msixRadios = document.querySelectorAll('.msix-radio');
 
     function updateBuildRowStyles() {
-        document.querySelectorAll('.build-checkbox').forEach(cb => {
-            const row = cb.closest('.build-row');
-            row?.classList.toggle('selected', cb.checked);
+        document.querySelectorAll('.build-radio').forEach(rb => {
+            const row = rb.closest('.build-row');
+            row?.classList.toggle('selected', rb.checked);
+        });
+        document.querySelectorAll('.msix-radio').forEach(rb => {
+            const row = rb.closest('.build-row-msix');
+            row?.classList.toggle('selected', rb.checked);
         });
     }
-    function updateAppSelectAllStates() {
-        appSelectAllCheckboxes.forEach(appCb => {
-            const app = appCb.getAttribute('data-app');
-            const appBuilds = Array.from(document.querySelectorAll(`.build-checkbox[data-app="${CSS.escape(app)}"]`))
-                .filter(cb => cb.offsetParent !== null); // visible only
-            const checked = appBuilds.filter(cb => cb.checked).length;
-            if (checked === 0) { appCb.indeterminate = false; appCb.checked = false; }
-            else if (checked === appBuilds.length) { appCb.indeterminate = false; appCb.checked = true; }
-            else { appCb.indeterminate = true; appCb.checked = false; }
-        });
-    }
+    
     function refreshSelectionSummary(){
-        const checks = Array.from(document.querySelectorAll('.build-checkbox'))
-            .filter(c=>c.checked && c.offsetParent !== null);
-        if(!checks.length){ selectionSummary.textContent='(none)'; return; }
+        const standardRadio = document.querySelector('.build-radio:checked');
+        const msixRadio = document.querySelector('.msix-radio:checked');
+        
         selectionSummary.innerHTML='';
-        checks.forEach(c=>{
+        
+        if (standardRadio) {
             const div=document.createElement('div');
-            const env = c.dataset.env ? ` (${c.dataset.env})` : '';
-            div.textContent = `${c.dataset.app} :: ${c.dataset.build}${env}`;
+            const env = standardRadio.dataset.env ? ` (${standardRadio.dataset.env})` : '';
+            div.textContent = `${standardRadio.dataset.app} :: ${standardRadio.dataset.build}${env}`;
             selectionSummary.appendChild(div);
-        });
+        }
+        
+        if (msixRadio) {
+            const div=document.createElement('div');
+            const env = msixRadio.dataset.env ? ` (${msixRadio.dataset.env})` : '';
+            div.innerHTML = `<span class="badge bg-success">MSIX</span> ${msixRadio.dataset.app} :: ${msixRadio.dataset.build}${env}`;
+            selectionSummary.appendChild(div);
+        }
+        
+        if (!standardRadio && !msixRadio) {
+            selectionSummary.textContent='(none)';
+        }
     }
 
-    // Row click toggles
+    // Row click toggles for radio buttons
     document.querySelectorAll('.build-row').forEach(row=>{
         row.addEventListener('click', e=>{
-            if (e.target.type === 'checkbox' || e.target.tagName === 'LABEL') return;
-            const cb = row.querySelector('.build-checkbox');
-            cb.checked = !cb.checked;
-            cb.dispatchEvent(new Event('change'));
+            if (e.target.type === 'radio' || e.target.tagName === 'LABEL') return;
+            const rb = row.querySelector('.build-radio');
+            if (rb) {
+                rb.checked = true;
+                rb.dispatchEvent(new Event('change'));
+            }
         });
     });
 
-    // Build checkbox change handlers
-    document.querySelectorAll('.build-checkbox').forEach(cb=>{
-        cb.addEventListener('change', ()=>{
+    document.querySelectorAll('.build-row-msix').forEach(row=>{
+        row.addEventListener('click', e=>{
+            if (e.target.type === 'radio' || e.target.tagName === 'LABEL') return;
+            const rb = row.querySelector('.msix-radio');
+            if (rb) {
+                rb.checked = true;
+                rb.dispatchEvent(new Event('change'));
+            }
+        });
+    });
+
+    // Build radio change handlers
+    buildRadios.forEach(rb=>{
+        rb.addEventListener('change', ()=>{
             updateBuildRowStyles();
-            updateAppSelectAllStates();
             refreshSelectionSummary();
         });
     });
 
-    // App-level select all
-    appSelectAllCheckboxes.forEach(appCb=>{
-        appCb.addEventListener('change', ()=>{
-            const app = appCb.getAttribute('data-app');
-            const visibleAppBuilds = Array.from(document.querySelectorAll(`.build-checkbox[data-app="${CSS.escape(app)}"]`))
-                .filter(cb => cb.offsetParent !== null);
-            visibleAppBuilds.forEach(cb => cb.checked = appCb.checked);
-            // trigger one change to refresh UI
-            if (visibleAppBuilds.length) visibleAppBuilds[0].dispatchEvent(new Event('change'));
+    msixRadios.forEach(rb=>{
+        rb.addEventListener('change', ()=>{
+            updateBuildRowStyles();
+            refreshSelectionSummary();
         });
     });
 
     clearSelectionBtn.addEventListener('click', ()=>{
-        document.querySelectorAll('.build-checkbox').forEach(c=>c.checked=false);
+        document.querySelectorAll('.build-radio').forEach(r=>r.checked=false);
+        document.querySelectorAll('.msix-radio').forEach(r=>r.checked=false);
         updateBuildRowStyles();
-        updateAppSelectAllStates();
         refreshSelectionSummary();
     });
 
-    // Environment filter - Fix the missing envSelect reference
-    function applyEnvFilter(){
-        // Since there's no envSelect dropdown, we'll skip the filtering or implement it differently
-        // For now, just make sure all cards are visible
-        document.querySelectorAll('.app-card').forEach(card=>{
-            const app = card.getAttribute('data-app');
-            const rows = card.querySelectorAll('.build-row');
-            let visibleCount = 0;
-            rows.forEach(row=>{
-                const cb = row.querySelector('.build-checkbox');
-                row.style.display = ''; // Show all rows
-                visibleCount++;
-            });
-            const badge = card.querySelector(`[data-app-badge="${CSS.escape(app)}"]`);
-            if (badge) badge.textContent = visibleCount;
-            card.style.display = visibleCount > 0 ? '' : 'none';
-        });
-        updateAppSelectAllStates();
-        refreshSelectionSummary();
-    }
-    
-    // Comment out or remove this line since envSelect doesn't exist
-    // envSelect.addEventListener('change', applyEnvFilter);
+    // Initial filter
+    filterMSIXBuilds();
     
     updateBuildRowStyles();
-    updateAppSelectAllStates();
     refreshSelectionSummary();
-    applyEnvFilter();
 
     // SignalR
     const connection = new signalR.HubConnectionBuilder().withUrl("/DevApp/copyHub").build();
@@ -469,20 +562,27 @@
         console.log('=== DEPLOY DEBUG START ===');
         console.log('startCopy function called');
         
+        // Check for MSIX selection
+        const msixRadio = document.querySelector('.msix-radio:checked');
+        const standardRadio = document.querySelector('.build-radio:checked');
+        
+        if (msixRadio) {
+            // MSIX installation - redirect to installation page
+            const app = msixRadio.dataset.app;
+            const build = msixRadio.dataset.build;
+            const env = msixRadio.dataset.env;
+            window.open(`/DevApp/Install?app=${encodeURIComponent(app)}&build=${encodeURIComponent(build)}&env=${encodeURIComponent(env)}`, '_blank');
+            return;
+        }
+        
         const servers = Array.from(serverCheckboxes).filter(c=>c.checked).map(c=>c.value);
-        const selections = Array.from(document.querySelectorAll('.build-checkbox'))
-            .filter(c=>c.checked && c.offsetParent !== null);
-            
-        // alert(`Found ${servers.length} servers and ${selections.length} builds`);
-        console.log('Selected servers:', servers);
-        console.log('Selected builds:', selections.map(s => s.value));
         
         if(!servers.length){ 
             alert('Select at least one server.'); 
             return; 
         }
-        if(!selections.length){ 
-            alert('Select at least one build.'); 
+        if(!standardRadio){ 
+            alert('Select a build to deploy.'); 
             return; 
         }
 
@@ -498,7 +598,7 @@
         
         fd.set('HubConnectionId', document.getElementById('hubConnectionId').value);
         fd.delete('Selections');
-        selections.forEach(s=>fd.append('Selections', s.value));
+        fd.append('Selections', standardRadio.value);
 
         const token = fd.get('__RequestVerificationToken');
         const body = new URLSearchParams(fd).toString();
