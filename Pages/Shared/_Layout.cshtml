@@ -4,10 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1.0" />
     <title>DevApp - @ViewData["Title"]</title>
+    <link href="~/lib/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="~/lib/mdbpro/css/mdb.min.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
-    <link href="~/lib/bootstrap/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link rel="icon" type="image/x-icon" href="~/favicon.ico" asp-append-version="true" />
+    @await RenderSectionAsync("Styles", required: false)
 </head>
 <body>
 <header>
@@ -70,8 +71,8 @@
     </main>
 </div>
 <footer class="border-top footer text-muted">
-    <div class="container">
-        &copy; @DateTime.Now.Year - DevApp </a>
+    <div class="container text-center">
+        &copy; @DateTime.Now.Year - DevApp
     </div>
 </footer>
 <script src="~/lib/jquery/dist/jquery.min.js"></script>

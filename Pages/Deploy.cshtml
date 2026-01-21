@@ -15,13 +15,88 @@
     <input type="hidden" id="hubConnectionId" name="HubConnectionId" />
     <h1 class="page-title">Deploy Applications</h1>
 
+    <!-- Top Control Panel - Single Row -->
+    <div class="row g-3 mb-3">
+        <!-- Environments Selection -->
+        <div class="col-lg-3 col-md-4">
+            <div class="card shadow-sm border-2 h-100">
+                <div class="card-header bg-info text-white">
+                    <strong><i class="bi bi-gear"></i> Environments</strong>
+                </div>
+                <div class="card-body p-3">
+                    <div class="d-flex flex-column gap-2">
+                        @foreach (var env in Model.Environments)
+                        {
+                            var isChecked = Model.SelectedEnvironments?.Contains(env.Value, StringComparer.OrdinalIgnoreCase) ?? false;
+                            <div class="form-check">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       name="SelectedEnvironments"
+                                       id="env-@env.Value"
+                                       value="@env.Value"
+                                       @(isChecked ? "checked" : null) />
+                                <label class="form-check-label" for="env-@env.Value">@env.Text</label>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Selected Build -->
+        <div class="col-lg-3 col-md-4">
+            <div class="card shadow-sm border-2 h-100">
+                <div class="card-header bg-info text-white">
+                    <strong><i class="bi bi-check-circle"></i> Selected Build</strong>
+                </div>
+                <div class="card-body p-3">
+                    <div id="selectionSummary" class="small" style="max-height:150px; overflow:auto;">
+                        <div class="text-muted fst-italic">No build selected</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="col-lg-6 col-md-4">
+            <div class="card shadow-sm border-2 h-100">
+                <div class="card-header bg-info text-white">
+                    <strong><i class="bi bi-rocket"></i> Actions</strong>
+                </div>
+                <div class="card-body p-3">
+                    <div class="d-flex gap-2 mb-3">
+                        <button type="submit" class="btn btn-success flex-fill">
+                            <i class="bi bi-cloud-arrow-up"></i> Deploy
+                        </button>
+                        <button type="button" id="clearSelection" class="btn btn-outline-secondary flex-fill">
+                            <i class="bi bi-x-circle"></i> Clear
+                        </button>
+                    </div>
+                    
+                    <!-- Progress section -->
+                    <div id="progressContainer" class="d-none">
+                        <div class="small fw-semibold mb-2">
+                            <i class="bi bi-hourglass-split"></i> Deployment Progress
+                        </div>
+                        <div class="progress mb-2" style="height:24px;">
+                            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%">0%</div>
+                        </div>
+                        
+                        <div id="deploymentLog" class="small bg-success bg-opacity-10 p-2 rounded border border-success border-opacity-25" style="max-height:180px; overflow:auto; min-height:50px; font-family: 'Courier New', monospace; font-size: 0.75rem;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="row g-4">
         <div class="col-lg-4">
             <!-- Servers Card -->
-            <div class="card shadow-sm mb-4">
-                <div class="card-header d-flex align-items-center justify-content-between">
-                    <span>Servers</span>
-                    <span class="badge bg-secondary">@Model.ServerList?.Count ?? 0</span>
+            <div class="card shadow-sm mb-4 border-2">
+                <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between">
+                    <strong><i class="bi bi-server"></i> Servers</strong>
+                    <span class="badge bg-white text-primary">@(Model.ServerList?.Count ?? 0)</span>
                 </div>
                 <div class="card-body p-2 d-flex flex-column">
                     <div class="table-responsive" style="max-height:380px; overflow:auto;">
@@ -29,10 +104,12 @@
                             <thead class="table-light sticky-top">
                                 <tr>
                                     <th scope="col" style="width:40px;">
-                                        <input type="checkbox" id="selectAllServers" class="form-check-input" title="Select All">
+                                        <div class="form-check">
+                                            <input type="checkbox" id="selectAllServers" class="form-check-input" title="Select All">
+                                        </div>
                                     </th>
                                     <th scope="col">Host</th>
-                                    <th scope="col">User</th>
+                                    <th scope="col">Description</th>
                                     <th scope="col">Status</th>
                                 </tr>
                             </thead>
@@ -49,12 +126,14 @@
                                     {
                                         <tr class="server-row server-online" data-hostname="@server.HostName">
                                             <td>
-                                                <input type="checkbox" class="form-check-input server-checkbox"
-                                                       name="SelectedServers" value="@server.HostName"
-                                                       id="server_@server.HostName" />
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input server-checkbox"
+                                                           name="SelectedServers" value="@server.HostName"
+                                                           id="server_@server.HostName" />
+                                                </div>
                                             </td>
                                             <td class="fw-semibold small">@server.HostName</td>
-                                            <td class="small text-muted">@server.UserID</td>
+                                            <td class="small text-muted">@server.Description</td>
                                             <td>
                                                 <span class="badge bg-success">Online</span>
                                             </td>
@@ -73,11 +152,11 @@
                                     @foreach (var server in offlineServers)
                                     {
                                         <tr class="server-row server-offline" data-hostname="@server.HostName">
-                                            <td>
-                                                <span class="inaccessible-indicator text-danger">✗</span>
+                                            <td class="text-center">
+                                                <i class="bi bi-circle-fill text-danger" style="font-size: 0.6rem;"></i>
                                             </td>
                                             <td class="fw-semibold small text-muted">@server.HostName</td>
-                                            <td class="small text-muted">@server.UserID</td>
+                                            <td class="small text-muted">@server.Description</td>
                                             <td>
                                                 <span class="badge bg-danger">Offline</span>
                                             </td>
@@ -95,139 +174,176 @@
                         </table>
                     </div>
                     <div id="selectedServersInfo" class="small text-muted mt-2 text-center">No servers selected</div>
-
-                    <!-- Environments Selection -->
-                    <div class="mt-3 pt-3 border-top">
-                        <label class="form-label fw-semibold small mb-2">Environments</label>
-                        <div class="btn-group flex-wrap" role="group" aria-label="Environments">
-                            @foreach (var env in Model.Environments)
-                            {
-                                var isChecked = Model.SelectedEnvironments?.Contains(env.Value, StringComparer.OrdinalIgnoreCase) ?? false;
-                                <input type="checkbox"
-                                       class="btn-check"
-                                       name="SelectedEnvironments"
-                                       id="env-@env.Value"
-                                       value="@env.Value"
-                                       @(isChecked ? "checked" : null)
-                                       autocomplete="off" />
-                                <label class="btn btn-sm btn-outline-primary" for="env-@env.Value">@env.Text</label>
-                            }
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Actions Card -->
-            <div class="card shadow-sm">
-                <div class="card-header">Actions</div>
-                <div class="card-body d-flex flex-column gap-2">
-                    <button type="submit" class="btn btn-primary w-100">
-                        <i class="bi bi-cloud-arrow-up"></i> Deploy Selected
-                    </button>
-                    <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100">
-                        <i class="bi bi-x-circle"></i> Clear Selection
-                    </button>
-
-                    <hr class="my-2">
-
-                    <div class="small fw-semibold mb-2">Selected Build</div>
-                    <div id="selectionSummary" class="small bg-light p-2 rounded text-muted" style="max-height:100px; overflow:auto;">
-                        (none selected)
-                    </div>
-
-                    <div id="progressContainer" class="d-none mt-2">
-                        <div class="small fw-semibold mb-1">
-                            <i class="bi bi-hourglass-split"></i> Deployment Progress
-                        </div>
-                        <div class="progress mb-2" style="height:24px;">
-                            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%">0%</div>
-                        </div>
-                        
-                        <!-- Unified Summary/Activity Box -->
-                        <div id="deploymentLog" class="small bg-success bg-opacity-10 p-2 rounded border border-success border-opacity-25" style="max-height:280px; overflow:auto; min-height:50px; font-family: 'Courier New', monospace; font-size: 0.85rem;">
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Apps & Builds on the right -->
         <div class="col-lg-8">
-            <!-- MSIX Packages Card -->
-            @if (Model.MSIXBuildGroups != null && Model.MSIXBuildGroups.Count > 0)
-            {
-                <div class="card shadow-sm mb-3">
-                    <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
-                        <strong><i class="bi bi-box"></i> MSIX Packages (WinMobile)</strong>
-                        <span class="badge bg-white text-success">@Model.MSIXBuildGroups.Count</span>
-                    </div>
-                    <div class="card-body p-2" style="max-height:30vh; overflow:auto;">
-                        <div class="row row-cols-1 g-2">
-                            @foreach (var group in Model.MSIXBuildGroups)
-                            {
-                                <div class="col">
-                                    <div class="card border-success">
-                                        <div class="card-header small fw-semibold d-flex justify-content-between align-items-center py-1 bg-light">
-                                            <span>@group.AppName</span>
-                                            <span class="badge bg-success">@group.Variants.Count</span>
-                                        </div>
-                                        <div class="card-body p-2">
-                                            @if (group.Variants.Count == 0)
-                                            {
-                                                <div class="small text-muted">No builds available</div>
-                                            }
-                                            else
-                                            {
-                                                <div class="list-group list-group-flush msix-builds-list" style="max-height: 320px; overflow-y: auto;">
-                                                    @foreach (var v in group.Variants)
-                                                    {
-                                                        var radioId = $"radio_msix_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
-                                                        <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-msix" 
-                                                               for="@radioId"
-                                                               data-app="@group.AppName"
-                                                               data-build="@v.Build"
-                                                               data-env="@v.Environment">
-                                                            <input class="form-check-input me-2 msix-radio"
-                                                                   type="radio"
-                                                                   id="@radioId"
-                                                                   name="MSIXSelection"
-                                                                   value="@v.SelectionValue(group.AppName)"
-                                                                   data-app="@group.AppName"
-                                                                   data-build="@v.Build"
-                                                                   data-env="@v.Environment" />
-                                                            <span class="small">@v.Display</span>
-                                                        </label>
-                                                    }
-                                                </div>
-                                            }
-                                        </div>
-                                    </div>
-                                </div>
-                            }
-                        </div>
-                    </div>
-                </div>
-            }
-
-            <!-- Standard Apps Grid -->
-            <div class="row row-cols-1 row-cols-md-2 g-3" id="appsCardsContainer" style="max-height:72vh; overflow:auto;">
-                @if (Model.AppBuildGroups == null || Model.AppBuildGroups.Count == 0)
+            <!-- Apps Container - 3 columns layout -->
+            <div class="row g-3" id="appsContainer" style="max-height:72vh; overflow:auto;">
+                
+                <!-- Admin App Card -->
+                @{
+                    var adminGroup = Model.AppBuildGroups?.FirstOrDefault(g => g.AppName.Equals("Admin", StringComparison.OrdinalIgnoreCase));
+                }
+                @if (adminGroup != null)
                 {
-                    <div class="col">
-                        <div class="alert alert-info m-0">
-                            <i class="bi bi-info-circle"></i> No applications found.
+                    <div class="col-lg-4 col-md-6 col-12">
+                        <div class="card shadow-sm h-100 border-2">
+                            <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
+                                <strong><i class="bi bi-shield-check"></i> CST Admin Manager</strong>
+                                <span class="badge bg-white text-success">@adminGroup.Variants.Count</span>
+                            </div>
+                            <div class="card-body p-2" style="max-height:400px; overflow:auto;">
+                                @if (adminGroup.Variants.Count == 0)
+                                {
+                                    <div class="small text-muted">No builds available</div>
+                                }
+                                else
+                                {
+                                    <div class="list-group list-group-flush" style="max-height: 350px; overflow-y: auto;">
+                                        @foreach (var v in adminGroup.Variants)
+                                        {
+                                            var checkboxId = $"checkbox_admin_{HashCode.Combine(adminGroup.AppName, v.Build, v.Environment ?? "")}";
+                                            <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-admin" 
+                                                   for="@checkboxId"
+                                                   data-app="@adminGroup.AppName"
+                                                   data-build="@v.Build"
+                                                   data-env="@v.Environment">
+                                                <div class="form-check">
+                                                    <input class="form-check-input me-2 build-checkbox"
+                                                           type="checkbox"
+                                                           id="@checkboxId"
+                                                           data-group="admin"
+                                                           value="@v.SelectionValue(adminGroup.AppName)"
+                                                           data-app="@adminGroup.AppName"
+                                                           data-build="@v.Build"
+                                                           data-env="@v.Environment" />
+                                                </div>
+                                                <span class="small">@v.Display</span>
+                                            </label>
+                                        }
+                                    </div>
+                                }
+                            </div>
                         </div>
                     </div>
                 }
-                else
+
+                <!-- TIM App Card -->
+                @{
+                    var timGroup = Model.AppBuildGroups?.FirstOrDefault(g => g.AppName.Equals("TIM", StringComparison.OrdinalIgnoreCase));
+                }
+                @if (timGroup != null)
                 {
-                    foreach (var group in Model.AppBuildGroups)
+                    <div class="col-lg-4 col-md-6 col-12">
+                        <div class="card shadow-sm h-100 border-2">
+                            <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
+                                <strong><i class="bi bi-clock-history"></i> CST TIM</strong>
+                                <span class="badge bg-white text-success">@timGroup.Variants.Count</span>
+                            </div>
+                            <div class="card-body p-2" style="max-height:400px; overflow:auto;">
+                                @if (timGroup.Variants.Count == 0)
+                                {
+                                    <div class="small text-muted">No builds available</div>
+                                }
+                                else
+                                {
+                                    <div class="list-group list-group-flush" style="max-height: 350px; overflow-y: auto;">
+                                        @foreach (var v in timGroup.Variants)
+                                        {
+                                            var checkboxId = $"checkbox_tim_{HashCode.Combine(timGroup.AppName, v.Build, v.Environment ?? "")}";
+                                            <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-tim" 
+                                                   for="@checkboxId"
+                                                   data-app="@timGroup.AppName"
+                                                   data-build="@v.Build"
+                                                   data-env="@v.Environment">
+                                                <div class="form-check">
+                                                    <input class="form-check-input me-2 build-checkbox"
+                                                           type="checkbox"
+                                                           id="@checkboxId"
+                                                           data-group="tim"
+                                                           value="@v.SelectionValue(timGroup.AppName)"
+                                                           data-app="@timGroup.AppName"
+                                                           data-build="@v.Build"
+                                                           data-env="@v.Environment" />
+                                                </div>
+                                                <span class="small">@v.Display</span>
+                                            </label>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                <!-- MSIX Packages Card -->
+                @if (Model.MSIXBuildGroups != null && Model.MSIXBuildGroups.Count > 0)
+                {
+                    <div class="col-lg-4 col-md-6 col-12">
+                        <div class="card shadow-sm h-100 border-2">
+                            <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
+                                <strong><i class="bi bi-box"></i> MSIX Packages</strong>
+                                <span class="badge bg-white text-success">@{
+                                    var totalMsixVariants = Model.MSIXBuildGroups?.Sum(g => g.Variants.Count) ?? 0;
+                                }@totalMsixVariants</span>
+                            </div>
+                            <div class="card-body p-2" style="max-height:400px; overflow:auto;">
+                                @if (Model.MSIXBuildGroups.Count == 0)
+                                {
+                                    <div class="small text-muted">No builds available</div>
+                                }
+                                else
+                                {
+                                    <div class="list-group list-group-flush" style="max-height: 350px; overflow-y: auto;">
+                                        @foreach (var group in Model.MSIXBuildGroups)
+                                        {
+                                            @foreach (var v in group.Variants)
+                                            {
+                                                var checkboxId = $"checkbox_msix_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
+                                                <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-msix" 
+                                                       for="@checkboxId"
+                                                       data-app="@group.AppName"
+                                                       data-build="@v.Build"
+                                                       data-env="@v.Environment">
+                                                    <div class="form-check">
+                                                        <input class="form-check-input me-2 msix-checkbox"
+                                                               type="checkbox"
+                                                               id="@checkboxId"
+                                                               value="@v.SelectionValue(group.AppName)"
+                                                               data-app="@group.AppName"
+                                                               data-build="@v.Build"
+                                                               data-env="@v.Environment" />
+                                                    </div>
+                                                    <span class="small">@group.AppName - @v.Display</span>
+                                                </label>
+                                            }
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                <!-- Other Apps Grid (if any remain) -->
+                @{
+                    var otherApps = Model.AppBuildGroups?
+                        .Where(g => !g.AppName.Equals("Admin", StringComparison.OrdinalIgnoreCase) && 
+                                    !g.AppName.Equals("TIM", StringComparison.OrdinalIgnoreCase))
+                        .ToList() ?? new List<DeployModel.AppBuildGroup>();
+                }
+                @if (otherApps.Count > 0)
+                {
+                    @foreach (var group in otherApps)
                     {
-                        <div class="col app-card" data-app="@group.AppName">
-                            <div class="card h-100 shadow-sm">
-                                <div class="card-header small fw-semibold d-flex justify-content-between align-items-center bg-light">
-                                    <span>@group.AppName</span>
-                                    <span class="badge bg-primary">@group.Variants.Count</span>
+                        <div class="col-lg-4 col-md-6 col-12 app-card" data-app="@group.AppName">
+                            <div class="card h-100 shadow-sm border-2">
+                                <div class="card-header small fw-semibold d-flex justify-content-between align-items-center bg-info text-white">
+                                    <strong>@group.AppName</strong>
+                                    <span class="badge bg-white text-info">@group.Variants.Count</span>
                                 </div>
                                 <div class="card-body p-0">
                                     @if (group.Variants.Count == 0)
@@ -253,14 +369,16 @@
                                                         data-build="@v.Build"
                                                         data-env="@v.Environment">
                                                         <td>
-                                                            <input class="form-check-input build-radio"
-                                                                   type="radio"
-                                                                   id="@radioId"
-                                                                   name="StandardSelection"
-                                                                   value="@v.SelectionValue(group.AppName)"
-                                                                   data-app="@group.AppName"
-                                                                   data-build="@v.Build"
-                                                                   data-env="@v.Environment" />
+                                                            <div class="form-check">
+                                                                <input class="form-check-input build-radio"
+                                                                       type="radio"
+                                                                       id="@radioId"
+                                                                       name="StandardSelection"
+                                                                       value="@v.SelectionValue(group.AppName)"
+                                                                       data-app="@group.AppName"
+                                                                       data-build="@v.Build"
+                                                                       data-env="@v.Environment" />
+                                                            </div>
                                                         </td>
                                                         <td class="text-wrap">
                                                             <label class="form-check-label small text-wrap" for="@radioId" title="@v.Display">
@@ -283,8 +401,20 @@
     </div>
 </form>
 
-@section Scripts {
+@section Styles {
 <style>
+    /* Card enhancements */
+    .card {
+        border: 2px solid rgba(0, 0, 0, 0.125) !important;
+        border-radius: 0.5rem;
+    }
+    
+    .card-header {
+        font-weight: 600;
+        border-bottom: 2px solid rgba(0, 0, 0, 0.125);
+        padding: 0.75rem 1rem;
+    }
+    
     /* Server table enhancements */
     .table-group-header {
         background-color: rgba(0, 0, 0, 0.02);
@@ -343,11 +473,7 @@
     
     /* Selection summary styling */
     #selectionSummary {
-        border-left: 3px solid #0d6efd;
         min-height: 40px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
     }
     
     /* Progress container */
@@ -364,7 +490,9 @@
         border: 1px solid #dee2e6;
     }
 </style>
+}
 
+@section Scripts {
 <script>
 (function(){
     // Prevent toggling inaccessible rows
@@ -489,176 +617,66 @@
 
     const buildRadios = document.querySelectorAll('.build-radio');
     const msixRadios = document.querySelectorAll('.msix-radio');
+    const buildCheckboxes = document.querySelectorAll('.build-checkbox');
 
     function updateBuildRowStyles() {
-        document.querySelectorAll('.build-radio').forEach(rb => {
-            const row = rb.closest('.build-row');
-            row?.classList.toggle('selected', rb.checked);
-        });
-        document.querySelectorAll('.msix-radio').forEach(rb => {
-            const row = rb.closest('.build-row-msix');
-            row?.classList.toggle('selected', rb.checked);
+        document.querySelectorAll('.build-checkbox').forEach(cb => {
+            const row = cb.closest('.list-group-item');
+            row?.classList.toggle('selected', cb.checked);
         });
     }
     
     function refreshSelectionSummary(){
-        const standardRadio = document.querySelector('.build-radio:checked');
+        const checkedStandard = document.querySelectorAll('.build-checkbox:checked');
         const msixRadio = document.querySelector('.msix-radio:checked');
         
         selectionSummary.innerHTML='';
         
-        if (standardRadio) {
-            const div=document.createElement('div');
-            const env = standardRadio.dataset.env ? ` (${standardRadio.dataset.env})` : '';
-            div.textContent = `${standardRadio.dataset.app} :: ${standardRadio.dataset.build}${env}`;
-            selectionSummary.appendChild(div);
+        if (checkedStandard.length > 0) {
+            checkedStandard.forEach(cb => {
+                const div=document.createElement('div');
+                div.className = 'mb-1 p-2 bg-light rounded';
+                const env = cb.dataset.env ? ` <span class="badge bg-secondary">${cb.dataset.env}</span>` : '';
+                div.innerHTML = `<strong>${cb.dataset.app}</strong> :: ${cb.dataset.build}${env}`;
+                selectionSummary.appendChild(div);
+            });
         }
         
         if (msixRadio) {
             const div=document.createElement('div');
-            const env = msixRadio.dataset.env ? ` (${msixRadio.dataset.env})` : '';
-            div.innerHTML = `<span class="badge bg-success">MSIX</span> ${msixRadio.dataset.app} :: ${msixRadio.dataset.build}${env}`;
+            div.className = 'mb-1 p-2 bg-light rounded';
+            const env = msixRadio.dataset.env ? ` <span class="badge bg-secondary">${msixRadio.dataset.env}</span>` : '';
+            div.innerHTML = `<span class="badge bg-success">MSIX</span> <strong>${msixRadio.dataset.app}</strong> :: ${msixRadio.dataset.build}${env}`;
             selectionSummary.appendChild(div);
         }
         
-        if (!standardRadio && !msixRadio) {
-            selectionSummary.innerHTML = '<span class="text-muted">(none selected)</span>';
+        if (checkedStandard.length === 0 && !msixRadio) {
+            selectionSummary.innerHTML = '<div class="text-muted fst-italic">No build selected</div>';
         }
     }
 
-    document.querySelectorAll('.build-row').forEach(row=>{
-        row.addEventListener('click', e=>{
-            if (e.target.type === 'radio' || e.target.tagName === 'LABEL') return;
-            const rb = row.querySelector('.build-radio');
-            if (rb) {
-                rb.checked = true;
-                rb.dispatchEvent(new Event('change'));
-            }
-        });
-    });
-
-    document.querySelectorAll('.build-row-msix').forEach(row=>{
-        row.addEventListener('click', e=>{
-            if (e.target.type === 'radio' || e.target.tagName === 'LABEL') return;
-            const rb = row.querySelector('.msix-radio');
-            if (rb) {
-                rb.checked = true;
-                rb.dispatchEvent(new Event('change'));
-            }
-        });
-    });
-
-    buildRadios.forEach(rb=>{
-        rb.addEventListener('change', ()=>{
-            updateBuildRowStyles();
-            refreshSelectionSummary();
-        });
-    });
-
-    msixRadios.forEach(rb=>{
-        rb.addEventListener('change', ()=>{
+    buildCheckboxes.forEach(cb=>{
+        cb.addEventListener('change', ()=>{
             updateBuildRowStyles();
             refreshSelectionSummary();
         });
     });
 
     clearSelectionBtn.addEventListener('click', ()=>{
-        document.querySelectorAll('.build-radio').forEach(r=>r.checked=false);
+        document.querySelectorAll('.build-checkbox').forEach(cb=>cb.checked=false);
         document.querySelectorAll('.msix-radio').forEach(r=>r.checked=false);
         updateBuildRowStyles();
         refreshSelectionSummary();
     });
 
-    filterMSIXBuilds();
-    updateBuildRowStyles();
-    refreshSelectionSummary();
-
-    // SignalR
-    const connection = new signalR.HubConnectionBuilder().withUrl("/DevApp/copyHub").build();
-    const deploymentLog = document.getElementById('deploymentLog');
-    
-    connection.on("ReceiveProgress", p => {
-        const bar = document.getElementById("progressBar");
-        bar.style.width = p + "%";
-        bar.textContent = p + "%";
-    });
-    
-    connection.on("ReceiveMessage", m => {
-        try {
-            // Try to parse as structured message
-            const data = JSON.parse(m);
-            let logLine = null;
-            
-            if (data.type === "copy_started") {
-                // Activity: copy start
-                logLine = document.createElement('div');
-                logLine.className = 'mb-2';
-                logLine.innerHTML = `<span style="color: #0d6efd;">📦 Copying files from ${data.app} (${data.build}) to ${data.server} - ${data.totalFiles} files...</span>`;
-            }
-            else if (data.type === "files_copied") {
-                // Activity: copy completed
-                logLine = document.createElement('div');
-                logLine.className = 'mb-2';
-                logLine.innerHTML = `<span style="color: #198754;">✓ ${data.server}: ${data.filesCopied} files copied</span>`;
-            }
-            else if (data.type === "shortcut_creating") {
-                // Activity: shortcut creation started
-                logLine = document.createElement('div');
-                logLine.className = 'mb-2';
-                logLine.innerHTML = `<span style="color: #0d6efd;">🔗 Creating shortcut for ${data.app} (${data.environment})...</span>`;
-            }
-            else if (data.type === "deployment_complete") {
-                // Complete deployment result
-                const env = data.environment ? ` (${data.environment})` : "";
-                logLine = document.createElement('div');
-                logLine.className = 'border-start ps-2 mb-2 border-success border-3';
-                logLine.style.paddingLeft = '0.75rem';
-                
-                // Convert UNC path to local path format
-                const localPath = 'C:\\CSTApps';
-                
-                logLine.innerHTML = `
-                    <div style="color: #198754; font-weight: bold;">✓ ${data.server} - ${data.app}${env}</div>
-                    <div style="color: #666; font-size: 0.8rem;">📦 ${data.shortcutName}</div>
-                    <div style="color: #666; font-size: 0.8rem;"><i class="bi bi-link-45deg"></i> <a href="${data.shortcutLink}" target="_blank" style="color: #0d6efd; text-decoration: none; margin-left: 0.25rem;">${localPath}</a></div>
-                `;
-            }
-            
-            if (logLine) {
-                deploymentLog.appendChild(logLine);
-                deploymentLog.scrollTop = deploymentLog.scrollHeight;
-                return;
-            }
-        } catch (e) {
-            // Not JSON, treat as regular message
-        }
-        
-        // Regular text messages
-        const logLine = document.createElement('div');
-        logLine.className = 'mb-1';
-        logLine.style.color = '#333';
-        logLine.textContent = m;
-        deploymentLog.appendChild(logLine);
-        deploymentLog.scrollTop = deploymentLog.scrollHeight;
-    });
-    
-    connection.on("ReceiveError", m => {
-        const logLine = document.createElement('div');
-        logLine.className = 'mb-1';
-        logLine.innerHTML = `<span style="color: #dc3545; font-weight: bold;">❌ ERROR: ${m}</span>`;
-        deploymentLog.appendChild(logLine);
-        deploymentLog.scrollTop = deploymentLog.scrollHeight;
-    });
-    
-    connection.start().then(()=> {
-        document.getElementById('hubConnectionId').value = connection.connectionId;
-    }).catch(err=>{
-        console.error("SignalR connection error:", err);
-    });
-
+    // Update startCopy to handle multiple checkbox selections
     window.startCopy = function(){
+        console.log('startCopy called');
         const msixRadio = document.querySelector('.msix-radio:checked');
-        const standardRadio = document.querySelector('.build-radio:checked');
+        const checkedStandard = Array.from(document.querySelectorAll('.build-checkbox:checked'));
+        
+        console.log('MSIX radio:', msixRadio);
+        console.log('Checked standard:', checkedStandard);
         
         if (msixRadio) {
             const app = msixRadio.dataset.app;
@@ -670,17 +688,21 @@
         
         const servers = Array.from(serverCheckboxes).filter(c=>c.checked).map(c=>c.value);
         
+        console.log('Selected servers:', servers);
+        console.log('Hub connection ID:', document.getElementById('hubConnectionId').value);
+        
         if(!servers.length){ 
             alert('Select at least one server.'); 
             return; 
         }
-        if(!standardRadio){ 
-            alert('Select a build to deploy.'); 
+        if(checkedStandard.length === 0){ 
+            alert('Select at least one build to deploy.'); 
             return; 
         }
 
+        console.log('Starting deployment...');
         progressContainer.classList.remove('d-none');
-        deploymentLog.innerHTML = '';  // ← Changed from statusBox.textContent = ''
+        deploymentLog.innerHTML = '';
         deployBtn.disabled = true;
 
         const form = document.getElementById('deploymentForm');
@@ -688,10 +710,17 @@
         
         fd.set('HubConnectionId', document.getElementById('hubConnectionId').value);
         fd.delete('Selections');
-        fd.append('Selections', standardRadio.value);
+        
+        // Add all checked builds to selections
+        checkedStandard.forEach(cb => {
+            fd.append('Selections', cb.value);
+        });
 
         const token = fd.get('__RequestVerificationToken');
         const body = new URLSearchParams(fd).toString();
+
+        console.log('Sending fetch request to /DevApp/Deploy?handler=Copy');
+        console.log('Body:', body);
 
         fetch('/DevApp/Deploy?handler=Copy', {
             method:'POST',
@@ -701,20 +730,128 @@
             },
             body
         }).then(async r=>{
+            console.log('Fetch response received:', r.status, r.statusText);
             const responseText = await r.text();
+            console.log('Response text:', responseText);
             let payload;
             try { 
                 payload = JSON.parse(responseText); 
+                console.log('Parsed payload:', payload);
+                
+                // Show success message
+                if (payload && payload.success) {
+                    const log = document.getElementById('deploymentLog');
+                    log.innerHTML = ''; // Clear any previous content
+                    const successMsg = document.createElement('div');
+                    successMsg.className = 'text-success fw-bold';
+                    successMsg.textContent = `✓ Deployment initiated successfully! ${payload.copyTasks} copy task(s) and ${payload.shortcutTasks} shortcut task(s) queued.`;
+                    log.appendChild(successMsg);
+                    
+                    const hr = document.createElement('hr');
+                    hr.className = 'my-2';
+                    log.appendChild(hr);
+                } else {
+                    const log = document.getElementById('deploymentLog');
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'text-danger fw-bold';
+                    errorMsg.textContent = '✗ Deployment failed or returned unexpected response.';
+                    log.appendChild(errorMsg);
+                }
             } catch(e) { 
+                console.error('JSON parse error:', e);
                 payload = null; 
             }
         }).catch(err=>{
             console.error('Fetch error:', err);
+            const log = document.getElementById('deploymentLog');
+            const errorMsg = document.createElement('div');
+            errorMsg.className = 'text-danger fw-bold';
+            errorMsg.textContent = '✗ Network error: ' + err.message;
+            log.appendChild(errorMsg);
         }).finally(()=>{
-            deployBtn.disabled = false;
+            setTimeout(() => {
+                deployBtn.disabled = false;
+            }, 5000); // Re-enable after 5 seconds
         });
     };
 
+})();
+</script>
+
+<script>
+// SignalR Hub Connection Setup
+(async function() {
+    const conn = new signalR.HubConnectionBuilder()
+        .withUrl("/DevApp/copyHub")
+        .withAutomaticReconnect()
+        .build();
+
+    // Listen for progress updates from server
+    conn.on("ReceiveProgress", (pct) => {
+        console.log('ReceiveProgress:', pct);
+        const pb = document.getElementById('progressBar');
+        if (pb) {
+            pb.style.width = pct + '%';
+            pb.textContent = pct + '%';
+        }
+    });
+
+    // Listen for log messages from server
+    conn.on("ReceiveMessage", (msg) => {
+        console.log('ReceiveMessage:', msg);
+        const log = document.getElementById('deploymentLog');
+        if (log) {
+            try {
+                const data = JSON.parse(msg);
+                const div = document.createElement('div');
+                div.className = 'mb-1';
+                
+                // Format based on message type
+                if (data.type === 'copy_started') {
+                    div.innerHTML = `<strong>📦 Starting:</strong> ${data.app} ${data.build} → ${data.server} (${data.totalFiles} files)`;
+                } else if (data.type === 'copy_completed') {
+                    div.innerHTML = `<strong class="text-success">✓ Copy Complete:</strong> ${data.app} ${data.build} → ${data.server} (${data.filesCopied} files)`;
+                } else if (data.type === 'deployment_complete') {
+                    div.innerHTML = `<strong class="text-info">🔗 Shortcut Created:</strong> ${data.shortcutName} on ${data.server} (${data.environment})`;
+                } else if (data.Message) {
+                    div.textContent = data.Message;
+                } else {
+                    // Display readable JSON for debugging
+                    div.innerHTML = `<pre class="mb-0 small">${JSON.stringify(data, null, 2)}</pre>`;
+                }
+                
+                log.appendChild(div);
+                log.scrollTop = log.scrollHeight;
+            } catch (e) {
+                // Not JSON, display as plain text
+                const div = document.createElement('div');
+                div.textContent = msg;
+                log.appendChild(div);
+                log.scrollTop = log.scrollHeight;
+            }
+        }
+    });
+
+    // Listen for error messages from server
+    conn.on("ReceiveError", (msg) => {
+        console.log('ReceiveError:', msg);
+        const log = document.getElementById('deploymentLog');
+        if (log) {
+            const div = document.createElement('div');
+            div.className = 'text-danger';
+            div.textContent = msg;
+            log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
+        }
+    });
+
+    try {
+        await conn.start();
+        document.getElementById('hubConnectionId').value = conn.connectionId;
+        console.log("SignalR connected:", conn.connectionId);
+    } catch (err) {
+        console.error("SignalR connection failed:", err);
+    }
 })();
 </script>
 }
