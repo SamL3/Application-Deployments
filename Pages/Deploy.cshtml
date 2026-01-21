@@ -93,13 +93,22 @@
     <div class="row g-4">
         <div class="col-lg-4">
             <!-- Servers Card -->
-            <div class="card shadow-sm mb-4 border-2">
+            <div class="card shadow-sm border-2" style="max-height: 65vh; display: flex; flex-direction: column;">
                 <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between">
                     <strong><i class="bi bi-server"></i> Servers</strong>
                     <span class="badge bg-white text-primary">@(Model.ServerList?.Count ?? 0)</span>
                 </div>
-                <div class="card-body p-2 d-flex flex-column">
-                    <div class="table-responsive" style="max-height:380px; overflow:auto;">
+                <div class="card-body p-2 d-flex flex-column" style="overflow: hidden; flex: 1;">
+                    <!-- Search Bar -->
+                    <div class="mb-2 flex-shrink-0">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" id="serverSearchInput" class="form-control" placeholder="Search servers...">
+                            <button class="btn btn-outline-secondary" type="button" id="clearSearchBtn">Clear</button>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive" style="overflow-y:auto; flex: 1; min-height: 0;">
                         <table class="table table-sm table-hover mb-0">
                             <thead class="table-light sticky-top">
                                 <tr>
@@ -124,7 +133,7 @@
                                     </tr>
                                     @foreach (var server in onlineServers)
                                     {
-                                        <tr class="server-row server-online" data-hostname="@server.HostName">
+                                        <tr class="server-row server-online" data-hostname="@server.HostName" data-description="@server.Description">
                                             <td>
                                                 <div class="form-check">
                                                     <input type="checkbox" class="form-check-input server-checkbox"
@@ -151,7 +160,7 @@
                                     </tr>
                                     @foreach (var server in offlineServers)
                                     {
-                                        <tr class="server-row server-offline" data-hostname="@server.HostName">
+                                        <tr class="server-row server-offline" data-hostname="@server.HostName" data-description="@server.Description">
                                             <td class="text-center">
                                                 <i class="bi bi-circle-fill text-danger" style="font-size: 0.6rem;"></i>
                                             </td>
@@ -181,7 +190,7 @@
         <!-- Apps & Builds on the right -->
         <div class="col-lg-8">
             <!-- Apps Container - 3 columns layout -->
-            <div class="row g-3" id="appsContainer" style="max-height:72vh; overflow:auto;">
+            <div class="row g-3" id="appsContainer" style="align-content: flex-start;">
                 
                 <!-- Admin App Card -->
                 @{
@@ -190,23 +199,23 @@
                 @if (adminGroup != null)
                 {
                     <div class="col-lg-4 col-md-6 col-12">
-                        <div class="card shadow-sm h-100 border-2">
+                        <div class="card shadow-sm border-2" style="height: 65vh; display: flex; flex-direction: column;">
                             <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
                                 <strong><i class="bi bi-shield-check"></i> CST Admin Manager</strong>
                                 <span class="badge bg-white text-success">@adminGroup.Variants.Count</span>
                             </div>
-                            <div class="card-body p-2" style="max-height:400px; overflow:auto;">
+                            <div class="card-body p-2" style="overflow:auto; flex: 1;">
                                 @if (adminGroup.Variants.Count == 0)
                                 {
                                     <div class="small text-muted">No builds available</div>
                                 }
                                 else
                                 {
-                                    <div class="list-group list-group-flush" style="max-height: 350px; overflow-y: auto;">
+                                    <div class="list-group list-group-flush">
                                         @foreach (var v in adminGroup.Variants)
                                         {
                                             var checkboxId = $"checkbox_admin_{HashCode.Combine(adminGroup.AppName, v.Build, v.Environment ?? "")}";
-                                            <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-admin" 
+                                            <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-admin"
                                                    for="@checkboxId"
                                                    data-app="@adminGroup.AppName"
                                                    data-build="@v.Build"
@@ -238,23 +247,23 @@
                 @if (timGroup != null)
                 {
                     <div class="col-lg-4 col-md-6 col-12">
-                        <div class="card shadow-sm h-100 border-2">
+                        <div class="card shadow-sm border-2" style="height: 65vh; display: flex; flex-direction: column;">
                             <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
                                 <strong><i class="bi bi-clock-history"></i> CST TIM</strong>
                                 <span class="badge bg-white text-success">@timGroup.Variants.Count</span>
                             </div>
-                            <div class="card-body p-2" style="max-height:400px; overflow:auto;">
+                            <div class="card-body p-2" style="overflow:auto; flex: 1;">
                                 @if (timGroup.Variants.Count == 0)
                                 {
                                     <div class="small text-muted">No builds available</div>
                                 }
                                 else
                                 {
-                                    <div class="list-group list-group-flush" style="max-height: 350px; overflow-y: auto;">
+                                    <div class="list-group list-group-flush">
                                         @foreach (var v in timGroup.Variants)
                                         {
                                             var checkboxId = $"checkbox_tim_{HashCode.Combine(timGroup.AppName, v.Build, v.Environment ?? "")}";
-                                            <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-tim" 
+                                            <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-tim"
                                                    for="@checkboxId"
                                                    data-app="@timGroup.AppName"
                                                    data-build="@v.Build"
@@ -283,27 +292,27 @@
                 @if (Model.MSIXBuildGroups != null && Model.MSIXBuildGroups.Count > 0)
                 {
                     <div class="col-lg-4 col-md-6 col-12">
-                        <div class="card shadow-sm h-100 border-2">
+                        <div class="card shadow-sm border-2" style="height: 65vh; display: flex; flex-direction: column;">
                             <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
                                 <strong><i class="bi bi-box"></i> MSIX Packages</strong>
                                 <span class="badge bg-white text-success">@{
                                     var totalMsixVariants = Model.MSIXBuildGroups?.Sum(g => g.Variants.Count) ?? 0;
                                 }@totalMsixVariants</span>
                             </div>
-                            <div class="card-body p-2" style="max-height:400px; overflow:auto;">
+                            <div class="card-body p-2" style="overflow:auto; flex: 1;">
                                 @if (Model.MSIXBuildGroups.Count == 0)
                                 {
                                     <div class="small text-muted">No builds available</div>
                                 }
                                 else
                                 {
-                                    <div class="list-group list-group-flush" style="max-height: 350px; overflow-y: auto;">
+                                    <div class="list-group list-group-flush">
                                         @foreach (var group in Model.MSIXBuildGroups)
                                         {
                                             @foreach (var v in group.Variants)
                                             {
                                                 var checkboxId = $"checkbox_msix_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
-                                                <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-msix" 
+                                                <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-msix"
                                                        for="@checkboxId"
                                                        data-app="@group.AppName"
                                                        data-build="@v.Build"
@@ -454,6 +463,10 @@
     
     .server-row.selected {
         background-color: rgba(13, 110, 253, 0.1);
+    }
+    
+    .hidden {
+        display: none !important;
     }
     
     /* Card header enhancements */
@@ -667,6 +680,32 @@
         document.querySelectorAll('.msix-radio').forEach(r=>r.checked=false);
         updateBuildRowStyles();
         refreshSelectionSummary();
+    });
+
+    // Server search functionality
+    const serverSearchInput = document.getElementById('serverSearchInput');
+    const clearSearchBtn = document.getElementById('clearSearchBtn');
+
+    function filterServers() {
+        const searchTerm = serverSearchInput.value.toLowerCase().trim();
+        const serverRows = document.querySelectorAll('.server-row');
+
+        serverRows.forEach(row => {
+            const hostname = row.getAttribute('data-hostname').toLowerCase();
+            const description = (row.getAttribute('data-description') || '').toLowerCase();
+            
+            if (searchTerm === '' || hostname.includes(searchTerm) || description.includes(searchTerm)) {
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
+        });
+    }
+
+    serverSearchInput.addEventListener('input', filterServers);
+    clearSearchBtn.addEventListener('click', () => {
+        serverSearchInput.value = '';
+        filterServers();
     });
 
     // Update startCopy to handle multiple checkbox selections

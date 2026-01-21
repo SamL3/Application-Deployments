@@ -9,15 +9,6 @@
 
 <h1 class="page-title">Remove Applications</h1>
 
-<!-- Search Bar -->
-<div class="mb-3">
-    <div class="input-group">
-        <span class="input-group-text"><i class="bi bi-search"></i></span>
-        <input type="text" id="serverSearchInput" class="form-control" placeholder="Search servers by hostname or description...">
-        <button class="btn btn-outline-secondary" type="button" id="clearSearchBtn">Clear</button>
-    </div>
-</div>
-
 <form id="maintenanceForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
     <div class="row g-4">
@@ -29,6 +20,15 @@
                     <span class="badge bg-white text-primary">@Model.ServerList.Count</span>
                 </div>
                 <div class="card-body p-2">
+                    <!-- Search Bar -->
+                    <div class="mb-2">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" id="serverSearchInput" class="form-control" placeholder="Search servers...">
+                            <button class="btn btn-outline-secondary" type="button" id="clearSearchBtn">Clear</button>
+                        </div>
+                    </div>
+                    
                     <div class="table-responsive" style="max-height:65vh; overflow:auto;">
                         <table class="table table-sm table-hover mb-2">
                             <thead class="table-light sticky-top">
