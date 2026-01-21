@@ -19,6 +19,15 @@
         <span id="hostScanSummary" class="small text-muted"></span>
     </div>
 
+    <!-- Search Bar -->
+    <div class="mb-3">
+        <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="serverSearchInput" class="form-control" placeholder="Search servers by hostname or description...">
+            <button class="btn btn-outline-secondary" type="button" id="clearSearchBtn">Clear</button>
+        </div>
+    </div>
+
     <div class="row g-3 mt-3" id="serversRow"></div>
 </div>
 
@@ -33,8 +42,9 @@
     .builds-list table td { padding:.25rem .5rem; }
     .app-name-trunc { max-width:180px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
     .server-header { min-height: 2.5rem; }
-    .server-hostname { font-weight: 600; }
-    .server-description { font-size: 0.65rem; color: #6c757d; font-weight: normal; margin-left:.5rem; max-width:120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+    .server-hostname { font-weight: 700; font-size: 1.1rem; }
+    .server-description { font-size: 0.85rem; color: #495057; font-weight: 600; margin-top: 0.25rem; }
+    .hidden { display: none !important; }
 </style>
 
 <script>
@@ -122,8 +132,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 serversRow.innerHTML = '<div class="col-12 text-center text-muted py-5">No hosts.</div>';
                 return;
             }
+            
+            // Sort servers: online first, then offline
+            const onlineServers = servers.filter(s => s.accessible === true);
+            const offlineServers = servers.filter(s => s.accessible !== true);
+            const sortedServers = [...onlineServers, ...offlineServers];
+            
             serversRow.innerHTML = '';
-            servers.forEach(s => {
+            sortedServers.forEach(s => {
                 const col = document.createElement('div');
                 col.className = 'col-xl-3 col-lg-4 col-md-6';
                 col.innerHTML = serverCardSkeleton(s);
@@ -148,14 +164,16 @@ document.addEventListener('DOMContentLoaded', () => {
             : `<span class="badge text-bg-danger ms-2">Offline</span>`;
 
         return `
-        <div class="card shadow-sm server-card ${accessible ? '' : 'border-danger'}" data-server="${escapeHtml(hostname)}">
+        <div class="card shadow-sm server-card ${accessible ? '' : 'border-danger'}" data-server="${escapeHtml(hostname)}" data-description="${escapeHtml(description)}">
             <div class="card-header d-flex justify-content-between align-items-start py-2 server-header">
-                <div class="d-flex align-items-center flex-wrap">
-                    <span class="server-hostname small">${escapeHtml(hostname)}</span>
-                    ${description ? `<span class="server-description" title="${escapeHtml(description)}">${escapeHtml(description)}</span>` : ''}
-                    ${headerBadge}
+                <div>
+                    <div class="server-hostname">${escapeHtml(hostname)}</div>
+                    ${description ? `<div class="server-description">${escapeHtml(description)}</div>` : ''}
                 </div>
-                ${accessible ? '<div class="spinner-border spinner-sm text-secondary ms-2" role="status"></div>' : ''}
+                <div class="d-flex align-items-center gap-2">
+                    ${headerBadge}
+                    ${accessible ? '<div class="spinner-border spinner-sm text-secondary" role="status"></div>' : ''}
+                </div>
             </div>
             <div class="card-body p-2">
                 <div class="section-title mt-0">Disk (C:)</div>
@@ -325,6 +343,32 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!s) return '';
         return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
+
+    // Search functionality
+    const searchInput = document.getElementById('serverSearchInput');
+    const clearSearchBtn = document.getElementById('clearSearchBtn');
+
+    function filterServers() {
+        const searchTerm = searchInput.value.toLowerCase().trim();
+        const serverCards = document.querySelectorAll('.server-card');
+
+        serverCards.forEach(card => {
+            const hostname = card.getAttribute('data-server').toLowerCase();
+            const description = card.getAttribute('data-description').toLowerCase();
+            
+            if (searchTerm === '' || hostname.includes(searchTerm) || description.includes(searchTerm)) {
+                card.parentElement.classList.remove('hidden');
+            } else {
+                card.parentElement.classList.add('hidden');
+            }
+        });
+    }
+
+    searchInput.addEventListener('input', filterServers);
+    clearSearchBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        filterServers();
+    });
 });
 </script>
 }
