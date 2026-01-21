@@ -26,10 +26,14 @@
 else
 {
     <div class="row g-4">
+        @{
+            var colorClasses = new[] { "test-card-blue", "test-card-green", "test-card-orange", "test-card-purple", "test-card-pink" };
+            var colorIndex = 0;
+        }
         @foreach (var t in Model.ApiTests)
         {
             <div class="col-12">
-                <div class="card shadow-sm test-card" data-test-id="@t.Id">
+                <div class="card shadow-sm test-card @colorClasses[colorIndex % colorClasses.Length]" data-test-id="@t.Id">
                     <div class="card-header d-flex align-items-center flex-wrap gap-2">
                         <div>
                             <div class="fw-semibold">@t.Description</div>
@@ -52,18 +56,17 @@ else
                             </div>
                             @if (t.Parameters.Count == 0)
                             {
-                                <div class="col-12 text-muted fst-italic">No parameters</div>
+                                <div class="col-12 text-muted fst-italics">No parameters</div>
                             }
                             else
                             {
                                 var idx = 0;
                                 foreach (var p in t.Parameters)
                                 {
-                                    // Detect pipe-delimited choices in the parameter value, e.g., "Dev|QA|UAT|Prd"
                                     var raw = p.Value ?? string.Empty;
                                     var choices = raw.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
                                     var hasChoices = choices.Length > 1;
-                                    var selected = hasChoices ? choices[0] : raw; // default to first choice
+                                    var selected = hasChoices ? choices[0] : raw;
                                     var nameSafe = (p.Name ?? string.Empty).Replace(" ", "_");
                                     <div class="col-md-4 param-row" data-param-name="@p.Name">
                                         <div class="input-group input-group-sm align-items-stretch">
@@ -71,7 +74,6 @@ else
                                             <input type="hidden" class="param-name" value="@p.Name" />
                                             @if (hasChoices)
                                             {
-                                                // Hidden value that Run/Save logic reads
                                                 <input type="hidden" class="param-value" value="@selected" />
                                                 <div class="btn-group flex-wrap ms-1" role="group" aria-label="@p.Name choices">
                                                     @for (var i = 0; i < choices.Length; i++)
@@ -114,6 +116,7 @@ else
                     </div>
                 </div>
             </div>
+            colorIndex++;
         }
     </div>
 }
@@ -121,6 +124,26 @@ else
 @section Scripts {
 <style>
     .test-card { margin-bottom: 1rem; }
+    .test-card.test-card-blue {
+        background: linear-gradient(to bottom, #e3f2fd 0%, #fff 100%);
+        border-left: 4px solid #1976d2;
+    }
+    .test-card.test-card-green {
+        background: linear-gradient(to bottom, #e8f5e9 0%, #fff 100%);
+        border-left: 4px solid #388e3c;
+    }
+    .test-card.test-card-orange {
+        background: linear-gradient(to bottom, #fff3e0 0%, #fff 100%);
+        border-left: 4px solid #f57c00;
+    }
+    .test-card.test-card-purple {
+        background: linear-gradient(to bottom, #f3e5f5 0%, #fff 100%);
+        border-left: 4px solid #7b1fa2;
+    }
+    .test-card.test-card-pink {
+        background: linear-gradient(to bottom, #fce4ec 0%, #fff 100%);
+        border-left: 4px solid #c2185b;
+    }
     .output-box { 
         background: #1e1e1e; 
         color: #d4d4d4; 
@@ -148,61 +171,80 @@ else
 </style>
 
 <script>
+// VERSION 2.6 - FIXED CLASS MANAGEMENT
+console.log('DevApp Test Page - Version 2.6 - Loaded at:', new Date().toISOString());
+
 document.addEventListener('DOMContentLoaded', () => {
     const tokenEl = document.querySelector('input[name="__RequestVerificationToken"]');
     const token = tokenEl ? tokenEl.value : '';
+    let isRunning = false;
 
     function getProp(obj, name) {
         return obj[name] ?? obj[name.charAt(0).toLowerCase() + name.slice(1)];
     }
 
-    // NEW: handle single-select button groups for parameters
+    function getRequiredElements(testCard) {
+        return {
+            runBtn: testCard.querySelector('.run-btn'),
+            outputBox: testCard.querySelector('.output-box'),
+            cmdPreview: testCard.querySelector('.cmd-preview'),
+            statusLine: testCard.querySelector('.status-line')
+        };
+    }
+
     document.addEventListener('change', (e) => {
         if (e.target.classList.contains('param-choice')) {
             const row = e.target.closest('.param-row');
             const hiddenVal = row?.querySelector('.param-value');
             if (hiddenVal) {
                 hiddenVal.value = e.target.value;
-                // Fire an input event so existing logic enables Save and updates command preview
                 hiddenVal.dispatchEvent(new Event('input', { bubbles: true }));
             }
         }
     });
 
     async function runTest(testCard, testId) {
-        const runBtn = testCard.querySelector('.run-btn');
-        const outputBox = testCard.querySelector('.output-box');
-        const statusLine = testCard.querySelector('.status-line');
-        const cmdPreview = testCard.querySelector('.cmd-preview');
-
-        if (!runBtn) return;
-
-        let completed = false;
-
-        runBtn.disabled = true;
-        runBtn.classList.add('busy');
-        runBtn.textContent = 'Running...';
-        statusLine.textContent = 'Running...';
-        statusLine.className = 'small text-info mt-2';
-        outputBox.textContent = '';
-
-        const parameters = [];
-        testCard.querySelectorAll('.param-row').forEach(row => {
-            const name = row.querySelector('.param-name')?.value;
-            const valueEl = row.querySelector('.param-value');
-            const value = valueEl ? valueEl.value : '';
-            if (name) parameters.push({ Name: name, Value: value });
-        });
-
         try {
+            if (isRunning) return;
+
+            const elements = getRequiredElements(testCard);
+            const { runBtn, outputBox, cmdPreview, statusLine } = elements;
+            
+            if (!runBtn || !outputBox || !cmdPreview || !statusLine) return;
+            if (runBtn.disabled) return;
+
+            isRunning = true;
+            runBtn.disabled = true;
+            runBtn.classList.add('busy');
+            runBtn.textContent = 'Running...';
+            statusLine.textContent = 'Running...';
+            // FIX: Use classList instead of className
+            statusLine.classList.remove('text-muted', 'text-success', 'text-danger', 'text-info');
+            statusLine.classList.add('text-info');
+            outputBox.textContent = '';
+
+            const parameters = [];
+            testCard.querySelectorAll('.param-row').forEach(row => {
+                const name = row.querySelector('.param-name')?.value;
+                const valueEl = row.querySelector('.param-value');
+                const value = valueEl ? valueEl.value : '';
+                if (name) parameters.push({ Name: name, Value: value });
+            });
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 65000);
+
             const response = await fetch('/DevApp/Test?handler=Run', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'RequestVerificationToken': token
                 },
-                body: JSON.stringify({ Id: testId, Parameters: parameters })
+                body: JSON.stringify({ Id: testId, Parameters: parameters }),
+                signal: controller.signal
             });
+
+            clearTimeout(timeoutId);
 
             const text = await response.text();
             let result;
@@ -212,7 +254,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 result = { message: 'Invalid JSON response', raw: text, success: false };
             }
 
-            console.debug('RunTest result:', result);
+            const freshElements = getRequiredElements(testCard);
+            const { cmdPreview: freshCmd, outputBox: freshOut, statusLine: freshStatus } = freshElements;
 
             const command = getProp(result, 'Command');
             const outputProp = getProp(result, 'Output');
@@ -222,45 +265,63 @@ document.addEventListener('DOMContentLoaded', () => {
             const durationMs = getProp(result, 'DurationMs');
             const message = result.message ?? result.Message;
 
-            cmdPreview.textContent = command || (message ? '(error)' : '(unknown)');
+            if (freshCmd) freshCmd.textContent = command || (message ? '(error)' : '(unknown)');
 
             let output = '';
             if (outputProp) output += outputProp;
-            if (errorProp) output += (output ? '\n' : '') + '=== STDERR ===\n' + errorProp;
+            if (errorProp) {
+                // Always show STDERR content, but label it appropriately
+                if (success) {
+                    output += (output ? '\n' : '') + '=== INFO ===\n' + errorProp;
+                } else {
+                    output += (output ? '\n' : '') + '=== STDERR ===\n' + errorProp;
+                }
+            }
             if (!output && message) output = message;
-            outputBox.textContent = output || '(no output)';
+            if (freshOut) freshOut.textContent = output || '(no output)';
 
-            if (outputBox.dataset.autoscroll === 'true')
-                outputBox.scrollTop = outputBox.scrollHeight;
+            if (freshOut && freshOut.dataset.autoscroll === 'true')
+                freshOut.scrollTop = freshOut.scrollHeight;
 
             const duration = durationMs ? ` (${Number(durationMs).toFixed(0)}ms)` : '';
-            if (success) {
-                statusLine.textContent = `Completed successfully. Exit code: ${exitCode}${duration}`;
-                statusLine.className = 'small text-success mt-2';
-            } else {
-                statusLine.textContent = `Failed. Exit code: ${exitCode ?? '-'}${duration}`;
-                statusLine.className = 'small text-danger mt-2';
+            if (freshStatus) {
+                // FIX: Use classList methods instead of className
+                freshStatus.classList.remove('text-muted', 'text-danger', 'text-info');
+                if (success) {
+                    freshStatus.textContent = `Completed successfully. Exit code: ${exitCode}${duration}`;
+                    freshStatus.classList.add('text-success');
+                } else {
+                    freshStatus.textContent = `Failed. Exit code: ${exitCode ?? '-'}${duration}`;
+                    freshStatus.classList.add('text-danger');
+                }
             }
         } catch (err) {
             console.error('Run error', err);
-            cmdPreview.textContent = '(error)';
-            outputBox.textContent = `Error: ${err.message}`;
-            statusLine.textContent = 'Request failed';
-            statusLine.className = 'small text-danger mt-2';
+            
+            const freshElements = getRequiredElements(testCard);
+            const { cmdPreview: freshCmd, outputBox: freshOut, statusLine: freshStatus } = freshElements;
+            
+            if (freshCmd) freshCmd.textContent = '(error)';
+            if (freshStatus) {
+                freshStatus.classList.remove('text-muted', 'text-success', 'text-info');
+                freshStatus.classList.add('text-danger');
+                if (err.name === 'AbortError') {
+                    if (freshOut) freshOut.textContent = 'Request timed out after 65 seconds. The server may be hung.';
+                    freshStatus.textContent = 'Request timeout';
+                } else {
+                    if (freshOut) freshOut.textContent = `Error: ${err.message}`;
+                    freshStatus.textContent = 'Request failed';
+                }
+            }
         } finally {
-            completed = true;
-            runBtn.disabled = false;
-            runBtn.classList.remove('busy');
-            runBtn.textContent = 'Run';
-        }
-
-        setTimeout(() => {
-            if (!completed) {
+            isRunning = false;
+            const runBtn = testCard.querySelector('.run-btn');
+            if (runBtn) {
                 runBtn.disabled = false;
                 runBtn.classList.remove('busy');
                 runBtn.textContent = 'Run';
             }
-        }, 5000);
+        }
     }
 
     document.getElementById('refreshAllBtn')?.addEventListener('click', () => {
@@ -270,9 +331,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('click', async (e) => {
         const testCard = e.target.closest('.test-card');
         if (!testCard) return;
+        
         const testId = testCard.dataset.testId;
+        
         if (e.target.classList.contains('run-btn')) {
-            if (!e.target.disabled) await runTest(testCard, testId);
+            await runTest(testCard, testId);
         } else if (e.target.classList.contains('save-btn')) {
             await saveUserConfig(testCard, testId);
         } else if (e.target.classList.contains('clear-btn')) {
@@ -352,7 +415,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (outputBox) outputBox.textContent = '';
         if (statusLine) {
             statusLine.textContent = 'Idle';
-            statusLine.className = 'small text-muted mt-2';
+            // FIX: Preserve status-line class
+            statusLine.classList.remove('text-success', 'text-danger', 'text-info');
+            statusLine.classList.add('text-muted');
         }
         if (cmdPreview) cmdPreview.textContent = '(idle)';
     }
@@ -435,4 +500,5 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 </script>
+
 }

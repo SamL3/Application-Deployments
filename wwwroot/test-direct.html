@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Direct Test - No Cache</title>
+</head>
+<body>
+    <h1>Direct Test (bypasses Razor cache)</h1>
+    <button id="testBtn">Click Me - Test Status Update</button>
+    <div id="status" style="margin-top: 20px; padding: 10px; border: 1px solid #ccc;">Status: Idle</div>
+    <pre id="output" style="margin-top: 20px; padding: 10px; background: #f0f0f0; min-height: 100px;"></pre>
+    
+    <script>
+        console.log('Direct test page loaded - Version 3.0');
+        
+        document.getElementById('testBtn').addEventListener('click', async function() {
+            const statusDiv = document.getElementById('status');
+            const outputDiv = document.getElementById('output');
+            
+            console.log('Button clicked!');
+            statusDiv.textContent = 'Status: RUNNING...';
+            statusDiv.style.background = 'yellow';
+            outputDiv.textContent = 'Starting test...\n';
+            
+            try {
+                const response = await fetch('/DevApp/Test?handler=Run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        Id: 'test_1759876714141',
+                        Parameters: [
+                            { Name: 'env', Value: 'dev' },
+                            { Name: 'firstname', Value: 'Test' }
+                        ]
+                    }),
+                    signal: AbortSignal.timeout(10000)
+                });
+                
+                const result = await response.json();
+                
+                statusDiv.textContent = 'Status: ' + (result.Success ? 'SUCCESS' : 'FAILED');
+                statusDiv.style.background = result.Success ? 'lightgreen' : 'pink';
+                outputDiv.textContent = JSON.stringify(result, null, 2);
+                
+            } catch (err) {
+                statusDiv.textContent = 'Status: ERROR - ' + err.message;
+                statusDiv.style.background = 'red';
+                outputDiv.textContent = 'Error: ' + err.message;
+            }
+        });
+    </script>
+</body>
+</html>

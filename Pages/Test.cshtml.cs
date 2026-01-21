@@ -207,6 +207,8 @@ namespace DevApp.Pages
             bool timedOut = false;
             const int timeoutMs = 60000;
 
+            _logger.LogInformation("Starting test execution: {Command}", fullCommand);
+
             try
             {
                 var psi = new ProcessStartInfo
@@ -216,61 +218,97 @@ namespace DevApp.Pages
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = System.Text.Encoding.UTF8,
+                    StandardErrorEncoding = System.Text.Encoding.UTF8
                 };
 
-                using var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-
-                var stdOutTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                var stdErrTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-                proc.OutputDataReceived += (_, e) =>
+                using (var proc = new Process { StartInfo = psi })
                 {
-                    if (e.Data == null) stdOutTcs.TrySetResult(true);
-                    else stdoutBuilder.AppendLine(e.Data);
-                };
-                proc.ErrorDataReceived += (_, e) =>
-                {
-                    if (e.Data == null) stdErrTcs.TrySetResult(true);
-                    else stderrBuilder.AppendLine(e.Data);
-                };
+                    proc.Start();
+                    _logger.LogInformation("Process started, PID: {ProcessId}", proc.Id);
 
-                proc.Start();
-                proc.BeginOutputReadLine();
-                proc.BeginErrorReadLine();
+                    // Read output synchronously using tasks to avoid BeginOutputReadLine issues with Docker
+                    var stdoutTask = Task.Run(() => proc.StandardOutput.ReadToEnd());
+                    var stderrTask = Task.Run(() => proc.StandardError.ReadToEnd());
 
-                var waitExitTask = proc.WaitForExitAsync();
-                var completed = await Task.WhenAny(Task.WhenAll(stdOutTcs.Task, stdErrTcs.Task, waitExitTask),
-                                                   Task.Delay(timeoutMs));
+                    // Create cancellation token for timeout
+                    using (var cts = new System.Threading.CancellationTokenSource(timeoutMs))
+                    {
+                        try
+                        {
+                            // Wait for process to exit
+                            await proc.WaitForExitAsync(cts.Token);
+                            _logger.LogInformation("Process exited, reading remaining output");
+                            
+                            // Wait for all output to be read (with a reasonable timeout)
+                            var allOutput = Task.WhenAll(stdoutTask, stderrTask);
+                            if (await Task.WhenAny(allOutput, Task.Delay(5000)) == allOutput)
+                            {
+                                stdoutBuilder.Append(await stdoutTask);
+                                stderrBuilder.Append(await stderrTask);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Output reading timed out after process exit");
+                                stderrBuilder.AppendLine("[WARNING] Output reading timed out, some output may be missing");
+                            }
+                            
+                            exitCode = proc.ExitCode;
+                            _logger.LogInformation("Process completed. ExitCode: {ExitCode}, STDOUT bytes: {StdoutLength}, STDERR bytes: {StderrLength}", 
+                                exitCode, stdoutBuilder.Length, stderrBuilder.Length);
+                        }
+                        catch (System.OperationCanceledException)
+                        {
+                            timedOut = true;
+                            stderrBuilder.AppendLine($"[TIMEOUT] Process exceeded {timeoutMs} ms and was terminated.");
+                            
+                            try
+                            {
+                                if (!proc.HasExited)
+                                {
+                                    proc.Kill(true);
+                                    proc.WaitForExit(5000);
+                                }
+                            }
+                            catch (Exception killEx)
+                            {
+                                _logger.LogError(killEx, "Error killing process on timeout");
+                            }
+                        }
+                    }
 
-                if (completed != Task.Delay(timeoutMs))
-                {
-                    await Task.WhenAll(stdOutTcs.Task, stdErrTcs.Task);
-                    exitCode = proc.HasExited ? proc.ExitCode : -1;
-                }
-                if (!proc.HasExited)
-                {
-                    timedOut = true;
-                    try { proc.Kill(entireProcessTree: true); } catch { }
+                    // Final cleanup
+                    try
+                    {
+                        if (!proc.HasExited)
+                        {
+                            proc.Kill(true);
+                            proc.WaitForExit(2000);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error in final process cleanup");
+                    }
                 }
             }
             catch (Exception ex)
             {
-                stderrBuilder.AppendLine(ex.Message);
+                _logger.LogError(ex, "Error running process");
+                stderrBuilder.AppendLine($"Process execution error: {ex.Message}");
+                exitCode = -1;
             }
 
             sw.Stop();
-
-            if (timedOut)
-                stderrBuilder.AppendLine($"[TIMEOUT] Process exceeded {timeoutMs} ms and was terminated.");
 
             var result = new RunResult
             {
                 Success = !timedOut && exitCode == 0,
                 ExitCode = exitCode,
                 Command = fullCommand,
-                Output = TrimTrailingNewline(stdoutBuilder.ToString()),
-                Error = TrimTrailingNewline(stderrBuilder.ToString()),
+                Output = RemoveAnsiCodes(stdoutBuilder.ToString()),
+                Error = RemoveAnsiCodes(stderrBuilder.ToString()),
                 DurationMs = sw.Elapsed.TotalMilliseconds
             };
 
@@ -428,6 +466,38 @@ namespace DevApp.Pages
             return result;
         }
 
+        private static string? ExtractDockerImageName(string scriptPath)
+        {
+            try
+            {
+                // scriptPath format: "docker run --rm cstcontainerregistry.azurecr.io/saml3/k6tests ./CreateUser.ps1"
+                // We want to extract: "cstcontainerregistry.azurecr.io/saml3/k6tests"
+                var parts = scriptPath.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                
+                // Find the image name - it's typically after "run" and after any flags (starting with -)
+                bool foundRun = false;
+                foreach (var part in parts)
+                {
+                    if (part.Equals("run", StringComparison.OrdinalIgnoreCase))
+                    {
+                        foundRun = true;
+                        continue;
+                    }
+                    
+                    if (foundRun && !part.StartsWith("-") && !part.StartsWith("./"))
+                    {
+                        return part;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore parsing errors
+            }
+            
+            return null;
+        }
+
         private static string TrimTrailingNewline(string s) =>
             s.EndsWith(Environment.NewLine) ? s[..^Environment.NewLine.Length] : s;
 
@@ -437,6 +507,50 @@ namespace DevApp.Pages
             if (token.Any(char.IsWhiteSpace) && !(token.StartsWith('"') && token.EndsWith('"')))
                 return "\"" + token.Replace("\"", "\\\"") + "\"";
             return token;
+        }
+
+        // Remove ANSI codes from output
+        private static string RemoveAnsiCodes(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return input;
+            
+            var cleaned = input;
+            
+            // Remove actual ANSI escape sequences
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\x1b\[[0-9;]*m", "");
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\x1b\[[0-9;]*[A-Za-z]", "");
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\x1b].*?\x07", "");
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\x1b\].*?(\x1b\\|[\x07\x08])", "");
+            
+            // Remove leftover ANSI fragments like [0m, [31m, etc.
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\[[\d;]+m", "");
+            
+            // Remove source=console suffix
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\s+source=console\s*$", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+            
+            // Clean up any remaining escaped characters
+            cleaned = cleaned.Replace("\\x1b", "");
+            cleaned = cleaned.Replace("\\\"", "\"");
+            cleaned = cleaned.Replace("\\/", "/");
+            cleaned = cleaned.Replace("\\n", " ");
+            cleaned = cleaned.Replace("\\r", "");
+            cleaned = cleaned.Replace("\\t", " ");
+            
+            // Add blank line between log entries for readability
+            var lines = cleaned.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+            var result = new StringBuilder();
+            
+            foreach (var line in lines)
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    result.AppendLine(line);
+                    result.AppendLine(); // Add blank line after each non-empty line
+                }
+            }
+            
+            return result.ToString().TrimEnd();
         }
     }
 }
