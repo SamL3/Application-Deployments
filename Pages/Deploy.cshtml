@@ -1,9 +1,13 @@
-@page
+﻿@page
+@using DevApp.Models
 @model DevApp.Pages.DeployModel
 @{
     ViewData["Title"] = "Deploy";
-    // Move this block ABOVE any usage of isUp
     Func<string,bool> isUp = h => Model.ServerAccessibility != null && Model.ServerAccessibility.TryGetValue(h, out var ok) && ok;
+    
+    // Separate servers into online and offline
+    var onlineServers = Model.ServerList?.Where(s => isUp(s.HostName)).ToList() ?? new List<ServerInfo>();
+    var offlineServers = Model.ServerList?.Where(s => !isUp(s.HostName)).ToList() ?? new List<ServerInfo>();
 }
 
 <form id="deploymentForm" method="post" onsubmit="event.preventDefault(); startCopy();" class="my-3">
@@ -13,125 +17,164 @@
 
     <div class="row g-4">
         <div class="col-lg-4">
-            <!-- Servers + Actions (unchanged) -->
+            <!-- Servers Card -->
             <div class="card shadow-sm mb-4">
-                <div class="card-header">Servers</div>
+                <div class="card-header d-flex align-items-center justify-content-between">
+                    <span>Servers</span>
+                    <span class="badge bg-secondary">@Model.ServerList?.Count ?? 0</span>
+                </div>
                 <div class="card-body p-2 d-flex flex-column">
-                    <div class="table-responsive" style="max-height:320px; overflow:auto;">
-                        <table class="table table-sm table-hover mb-2">
+                    <div class="table-responsive" style="max-height:380px; overflow:auto;">
+                        <table class="table table-sm table-hover mb-0">
                             <thead class="table-light sticky-top">
                                 <tr>
-                                    <th scope="col">
+                                    <th scope="col" style="width:40px;">
                                         <input type="checkbox" id="selectAllServers" class="form-check-input" title="Select All">
                                     </th>
                                     <th scope="col">Host</th>
                                     <th scope="col">User</th>
-                                    <th scope="col">Description</th>
+                                    <th scope="col">Status</th>
                                 </tr>
                             </thead>
-                            <tbody id="serversTableBody">
-                                @foreach (var server in Model.ServerList)
+                            <tbody>
+                                <!-- Online Servers Section -->
+                                @if (onlineServers.Count > 0)
                                 {
-                                    var accessible = isUp(server.HostName);
-                                    <tr class="server-row @(accessible ? "" : "server-down")" data-hostname="@server.HostName">
-                                        <td>
-                                            @if (accessible)
-                                            {
+                                    <tr class="table-group-header">
+                                        <td colspan="4" class="bg-success bg-opacity-10 text-success fw-bold small">
+                                            ✓ Online (@onlineServers.Count)
+                                        </td>
+                                    </tr>
+                                    @foreach (var server in onlineServers)
+                                    {
+                                        <tr class="server-row server-online" data-hostname="@server.HostName">
+                                            <td>
                                                 <input type="checkbox" class="form-check-input server-checkbox"
                                                        name="SelectedServers" value="@server.HostName"
                                                        id="server_@server.HostName" />
-                                            }
-                                            else
-                                            {
-                                                <span class="inaccessible-indicator text-danger fw-bold">X</span>
-                                            }
+                                            </td>
+                                            <td class="fw-semibold small">@server.HostName</td>
+                                            <td class="small text-muted">@server.UserID</td>
+                                            <td>
+                                                <span class="badge bg-success">Online</span>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+
+                                <!-- Offline Servers Section -->
+                                @if (offlineServers.Count > 0)
+                                {
+                                    <tr class="table-group-header">
+                                        <td colspan="4" class="bg-danger bg-opacity-10 text-danger fw-bold small">
+                                            ✗ Offline (@offlineServers.Count)
                                         </td>
-                                        <td class="fw-semibold">@server.HostName</td>
-                                        <td class="small text-muted">@server.UserID</td>
-                                        <td class="small">
-                                            @server.Description
-                                            @if (!accessible)
-                                            {
-                                                <span class="badge bg-danger ms-1">Down</span>
-                                            }
-                                        </td>
+                                    </tr>
+                                    @foreach (var server in offlineServers)
+                                    {
+                                        <tr class="server-row server-offline" data-hostname="@server.HostName">
+                                            <td>
+                                                <span class="inaccessible-indicator text-danger">✗</span>
+                                            </td>
+                                            <td class="fw-semibold small text-muted">@server.HostName</td>
+                                            <td class="small text-muted">@server.UserID</td>
+                                            <td>
+                                                <span class="badge bg-danger">Offline</span>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+
+                                @if ((onlineServers.Count + offlineServers.Count) == 0)
+                                {
+                                    <tr>
+                                        <td colspan="4" class="text-center text-muted small py-3">No servers configured</td>
                                     </tr>
                                 }
                             </tbody>
                         </table>
                     </div>
-                    <div id="selectedServersInfo" class="small text-muted mt-2">No servers selected</div>
+                    <div id="selectedServersInfo" class="small text-muted mt-2 text-center">No servers selected</div>
 
-                    <!-- Replace the environment dropdown with a multi-select button group -->
-                    <div class="mb-3">
-                      <label class="form-label">Environments</label>
-                      <div class="btn-group flex-wrap" role="group" aria-label="Environments">
-                        @foreach (var env in Model.Environments)
-                        {
-                            var isChecked = Model.SelectedEnvironments?.Contains(env.Value, StringComparer.OrdinalIgnoreCase) ?? false;
-                            <input type="checkbox"
-                                   class="btn-check"
-                                   name="SelectedEnvironments"
-                                   id="env-@env.Value"
-                                   value="@env.Value"
-                                   @(isChecked ? "checked" : null)
-                                   autocomplete="off" />
-                            <label class="btn btn-outline-primary m-1" for="env-@env.Value">@env.Text</label>
-                        }
-                      </div>
+                    <!-- Environments Selection -->
+                    <div class="mt-3 pt-3 border-top">
+                        <label class="form-label fw-semibold small mb-2">Environments</label>
+                        <div class="btn-group flex-wrap" role="group" aria-label="Environments">
+                            @foreach (var env in Model.Environments)
+                            {
+                                var isChecked = Model.SelectedEnvironments?.Contains(env.Value, StringComparer.OrdinalIgnoreCase) ?? false;
+                                <input type="checkbox"
+                                       class="btn-check"
+                                       name="SelectedEnvironments"
+                                       id="env-@env.Value"
+                                       value="@env.Value"
+                                       @(isChecked ? "checked" : null)
+                                       autocomplete="off" />
+                                <label class="btn btn-sm btn-outline-primary" for="env-@env.Value">@env.Text</label>
+                            }
+                        </div>
                     </div>
                 </div>
             </div>
 
+            <!-- Actions Card -->
             <div class="card shadow-sm">
                 <div class="card-header">Actions</div>
-                <div class="card-body d-flex flex-column">
-                    <div class="mb-3">
-                        <button type="submit" class="btn btn-primary w-100 mb-2">Deploy Selected</button>
-                        <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100 mb-2">Clear Selection</button>
-                        <button type="button" id="openRootBtn" class="btn btn-outline-info w-100 mb-2"
-                                data-path="@Model.StagingPath">Open Root App Folder</button>
-                        <button type="button" id="openShortcutsBtn" class="btn btn-outline-success w-100"
-                                title="Open C:\CSTApps folder">Open Shortcuts Folder</button>
+                <div class="card-body d-flex flex-column gap-2">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-cloud-arrow-up"></i> Deploy Selected
+                    </button>
+                    <button type="button" id="clearSelection" class="btn btn-outline-secondary w-100">
+                        <i class="bi bi-x-circle"></i> Clear Selection
+                    </button>
+
+                    <hr class="my-2">
+
+                    <div class="small fw-semibold mb-2">Selected Build</div>
+                    <div id="selectionSummary" class="small bg-light p-2 rounded text-muted" style="max-height:100px; overflow:auto;">
+                        (none selected)
                     </div>
 
-                    <div class="small mb-2"><strong>Selected Builds</strong></div>
-                    <div id="selectionSummary" class="small mb-3" style="max-height:120px; overflow:auto;">(none)</div>
-
-                    <div id="progressContainer" class="d-none">
-                        <div class="small text-muted mb-1">Progress</div>
-                        <div class="progress mb-2" style="height:20px;">
+                    <div id="progressContainer" class="d-none mt-2">
+                        <div class="small fw-semibold mb-1">
+                            <i class="bi bi-hourglass-split"></i> Deployment Progress
+                        </div>
+                        <div class="progress mb-2" style="height:24px;">
                             <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width:0%">0%</div>
                         </div>
-                        <pre id="statusMessage" class="small bg-light p-2 rounded" style="height:160px; overflow:auto;"></pre>
+                        
+                        <!-- Unified Summary/Activity Box -->
+                        <div id="deploymentLog" class="small bg-success bg-opacity-10 p-2 rounded border border-success border-opacity-25" style="max-height:280px; overflow:auto; min-height:50px; font-family: 'Courier New', monospace; font-size: 0.85rem;">
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Apps grid on the right, rendered similar to Remove -->
+        <!-- Apps & Builds on the right -->
         <div class="col-lg-8">
-            <!-- MSIX Packages Card (WinMobile) -->
+            <!-- MSIX Packages Card -->
             @if (Model.MSIXBuildGroups != null && Model.MSIXBuildGroups.Count > 0)
             {
                 <div class="card shadow-sm mb-3">
-                    <div class="card-header bg-success text-white">
-                        <strong>MSIX Packages (WinMobile)</strong>
+                    <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
+                        <strong><i class="bi bi-box"></i> MSIX Packages (WinMobile)</strong>
+                        <span class="badge bg-white text-success">@Model.MSIXBuildGroups.Count</span>
                     </div>
                     <div class="card-body p-2" style="max-height:30vh; overflow:auto;">
                         <div class="row row-cols-1 g-2">
                             @foreach (var group in Model.MSIXBuildGroups)
                             {
                                 <div class="col">
-                                    <div class="card">
-                                        <div class="card-header small fw-semibold d-flex justify-content-between align-items-center py-1">
+                                    <div class="card border-success">
+                                        <div class="card-header small fw-semibold d-flex justify-content-between align-items-center py-1 bg-light">
                                             <span>@group.AppName</span>
-                                            <span class="badge bg-secondary">@group.Variants.Count</span>
+                                            <span class="badge bg-success">@group.Variants.Count</span>
                                         </div>
                                         <div class="card-body p-2">
                                             @if (group.Variants.Count == 0)
                                             {
-                                                <div class="small text-muted">No builds</div>
+                                                <div class="small text-muted">No builds available</div>
                                             }
                                             else
                                             {
@@ -139,7 +182,7 @@
                                                     @foreach (var v in group.Variants)
                                                     {
                                                         var radioId = $"radio_msix_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
-                                                        <label class="list-group-item list-group-item-action py-2 px-3 d-flex align-items-center build-row-msix" 
+                                                        <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-msix" 
                                                                for="@radioId"
                                                                data-app="@group.AppName"
                                                                data-build="@v.Build"
@@ -171,7 +214,9 @@
                 @if (Model.AppBuildGroups == null || Model.AppBuildGroups.Count == 0)
                 {
                     <div class="col">
-                        <div class="alert alert-warning m-0">No applications found.</div>
+                        <div class="alert alert-info m-0">
+                            <i class="bi bi-info-circle"></i> No applications found.
+                        </div>
                     </div>
                 }
                 else
@@ -180,14 +225,14 @@
                     {
                         <div class="col app-card" data-app="@group.AppName">
                             <div class="card h-100 shadow-sm">
-                                <div class="card-header small fw-semibold d-flex justify-content-between align-items-center">
+                                <div class="card-header small fw-semibold d-flex justify-content-between align-items-center bg-light">
                                     <span>@group.AppName</span>
-                                    <span class="badge bg-secondary app-badge" data-app-badge="@group.AppName">@group.Variants.Count</span>
+                                    <span class="badge bg-primary">@group.Variants.Count</span>
                                 </div>
                                 <div class="card-body p-0">
                                     @if (group.Variants.Count == 0)
                                     {
-                                        <div class="p-3 text-muted small">No builds</div>
+                                        <div class="p-3 text-muted small">No builds available</div>
                                     }
                                     else
                                     {
@@ -239,24 +284,102 @@
 </form>
 
 @section Scripts {
+<style>
+    /* Server table enhancements */
+    .table-group-header {
+        background-color: rgba(0, 0, 0, 0.02);
+        border-top: 2px solid rgba(0, 0, 0, 0.05);
+    }
+    
+    .server-row.server-online {
+        background-color: rgba(40, 167, 69, 0.03);
+    }
+    
+    .server-row.server-online:hover {
+        background-color: rgba(40, 167, 69, 0.08);
+    }
+    
+    .server-row.server-offline {
+        opacity: 0.65;
+        background-color: rgba(220, 53, 69, 0.03);
+    }
+    
+    .server-row.server-offline:hover {
+        opacity: 0.65;
+        background-color: rgba(220, 53, 69, 0.08);
+        cursor: not-allowed;
+    }
+    
+    .inaccessible-indicator {
+        display: inline-block;
+        width: 1.2rem;
+        text-align: center;
+        font-weight: bold;
+    }
+    
+    /* Build row selection highlight */
+    .build-row.selected {
+        background-color: rgba(13, 110, 253, 0.1);
+    }
+    
+    .server-row.selected {
+        background-color: rgba(13, 110, 253, 0.1);
+    }
+    
+    /* Card header enhancements */
+    .card-header {
+        font-weight: 500;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    }
+    
+    /* Button group improvements */
+    .btn-group .btn {
+        border-radius: 0.375rem;
+    }
+    
+    .btn-group .btn:not(:first-child) {
+        margin-left: 0.25rem;
+    }
+    
+    /* Selection summary styling */
+    #selectionSummary {
+        border-left: 3px solid #0d6efd;
+        min-height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    /* Progress container */
+    #progressContainer {
+        border-top: 1px solid #dee2e6;
+        padding-top: 1rem;
+    }
+    
+    /* Status message box */
+    #statusMessage {
+        font-size: 0.75rem;
+        font-family: 'Courier New', monospace;
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+    }
+</style>
+
 <script>
 (function(){
-    // Patch existing logic: prevent toggling inaccessible rows
-    document.querySelectorAll('.server-row').forEach(row=>{
+    // Prevent toggling inaccessible rows
+    document.querySelectorAll('.server-row.server-offline').forEach(row=>{
         row.addEventListener('click', e=>{
-            const cb=row.querySelector('.server-checkbox');
-            if(!cb || cb.disabled) return;
-            if(e.target.type==='checkbox') return;
-            cb.checked=!cb.checked;
-            cb.dispatchEvent(new Event('change'));
+            e.preventDefault();
+            return false;
         });
     });
+    
     const selectAll=document.getElementById('selectAllServers');
     if(selectAll){
         selectAll.addEventListener('change',()=>{
             const checked=selectAll.checked;
             document.querySelectorAll('.server-checkbox').forEach(cb=>{
-                if(cb.disabled) return;
                 cb.checked=checked;
                 cb.dispatchEvent(new Event('change'));
             });
@@ -264,11 +387,6 @@
     }
 })();
 </script>
-<style>
-    .inaccessible-indicator { display:inline-block; width:1.1rem; text-align:center; }
-    .server-row.server-down { opacity:.55; }
-    .server-row.server-down:hover { background:inherit; cursor:not-allowed; }
-</style>
 
 <script>
 (function(){
@@ -278,94 +396,29 @@
     const selectionSummary = document.getElementById('selectionSummary');
     const clearSelectionBtn = document.getElementById('clearSelection');
     const progressContainer = document.getElementById('progressContainer');
-    const envSelect = document.getElementById('envSelect');
     const deployBtn = document.querySelector('button[type="submit"]');
-    const statusBox = document.getElementById('statusMessage');
-    const openRootBtn = document.getElementById('openRootBtn');
+    // const openRootBtn = document.getElementById('openRootBtn');
 
     let selectedServers = [];
 
-    if (openRootBtn) {
-        openRootBtn.addEventListener('click', function(e){
-            e.preventDefault();
-            const p = this.dataset.path || '';
-            if (!p) { alert('Root App folder (StagingPath) not configured.'); return; }
-            
-            // For UNC paths, show in prompt for easy copying
-            let url = p;
-            if (url.startsWith('\\\\')) {
-                // Use prompt which allows easy copy (Ctrl+C)
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(url).then(() => {
-                        alert('Network path copied to clipboard:\n' + url + '\n\nPaste into Windows Explorer address bar (Win+E, Ctrl+V)');
-                    }).catch(() => {
-                        prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', url);
-                    });
-                } else {
-                    prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', url);
-                }
-            } else {
-                // Local paths might work with file:/// protocol
-                url = 'file:///' + url.replace(/\\/g, '/');
-                const w = window.open(url, '_blank');
-                if (!w) {
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(p).then(() => {
-                            alert('Path copied to clipboard:\n' + p + '\n\nPaste into Windows Explorer (Win+E, Ctrl+V)');
-                        }).catch(() => {
-                            prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', p);
-                        });
-                    } else {
-                        prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', p);
-                    }
-                }
-            }
-        });
-    }
-
-    // Open Shortcuts Folder button
-    const openShortcutsBtn = document.getElementById('openShortcutsBtn');
-    if (openShortcutsBtn) {
-        openShortcutsBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            
-            const shortcutsPath = 'C:\\CSTApps';
-            
-            // Try to open directly with file protocol
-            const url = 'file:///' + shortcutsPath.replace(/\\/g, '/');
-            const w = window.open(url, '_blank');
-            
-            if (!w) {
-                // Browser blocked it, show path for manual copy
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(shortcutsPath).then(() => {
-                        alert(`Shortcuts folder path copied to clipboard:\n${shortcutsPath}\n\nPaste into Windows Explorer (Win+E, Ctrl+V)`);
-                    }).catch(() => {
-                        prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', shortcutsPath);
-                    });
-                } else {
-                    prompt('Copy this path (Ctrl+C) to open in Windows Explorer:', shortcutsPath);
-                }
-            }
-        });
-    }
-
-    // Server row click
-    document.querySelectorAll('.server-row').forEach(row => {
+    document.querySelectorAll('.server-row.server-online').forEach(row => {
         row.addEventListener('click', e => {
             if (e.target.type === 'checkbox') return;
             const cb = row.querySelector('.server-checkbox');
-            cb.checked = !cb.checked;
-            cb.dispatchEvent(new Event('change'));
+            if (cb) {
+                cb.checked = !cb.checked;
+                cb.dispatchEvent(new Event('change'));
+            }
         });
     });
 
     function updateServerRowStyles(){
         serverCheckboxes.forEach(cb=>{
             const row = cb.closest('.server-row');
-            row.classList.toggle('selected', cb.checked);
+            row?.classList.toggle('selected', cb.checked);
         });
     }
+    
     function updateSelectAllState(){
         const total = serverCheckboxes.length;
         const checked = Array.from(serverCheckboxes).filter(c=>c.checked).length;
@@ -373,11 +426,12 @@
         else if (checked === total){ selectAllServers.indeterminate=false; selectAllServers.checked=true; }
         else { selectAllServers.indeterminate=true; selectAllServers.checked=false; }
     }
+    
     function updateSelectedServersInfo(){
         selectedServers = Array.from(serverCheckboxes).filter(c=>c.checked).map(c=>c.value);
         if (selectedServers.length === 0) selectedServersInfo.textContent = 'No servers selected';
-        else if (selectedServers.length === 1) selectedServersInfo.textContent = `Selected: ${selectedServers[0]}`;
-        else selectedServersInfo.textContent = `Selected: ${selectedServers.length} servers`;
+        else if (selectedServers.length === 1) selectedServersInfo.textContent = `✓ Selected: ${selectedServers[0]}`;
+        else selectedServersInfo.textContent = `✓ Selected: ${selectedServers.length} servers`;
     }
 
     selectAllServers.addEventListener('change', ()=>{
@@ -386,36 +440,32 @@
         updateSelectAllState();
         updateSelectedServersInfo();
     });
+    
     serverCheckboxes.forEach(c=>c.addEventListener('change', ()=>{
         updateServerRowStyles();
         updateSelectAllState();
         updateSelectedServersInfo();
     }));
-    updateServerRowStyles(); updateSelectAllState(); updateSelectedServersInfo();
+    
+    updateServerRowStyles(); 
+    updateSelectAllState(); 
+    updateSelectedServersInfo();
 
-    // Environment filtering for MSIX builds
     function filterMSIXBuilds() {
         const selectedEnvs = Array.from(document.querySelectorAll('input[name="SelectedEnvironments"]:checked')).map(e => e.value);
-        console.log('filterMSIXBuilds called - Selected envs:', selectedEnvs);
-        
-        let hiddenCount = 0;
         let shownCount = 0;
         
         document.querySelectorAll('.build-row-msix').forEach(row => {
             const rowEnv = row.dataset.env;
-            console.log('Row env:', rowEnv, 'Display:', row.style.display);
-            // Only show builds if their environment is selected (case-insensitive match)
             const shouldShow = selectedEnvs.length > 0 && selectedEnvs.some(env => env.toLowerCase() === rowEnv?.toLowerCase());
             
             if (shouldShow) {
-                row.style.display = 'flex'; // Use flex instead of empty string to force visibility
+                row.style.display = 'flex';
                 row.classList.remove('d-none');
                 shownCount++;
             } else {
                 row.style.display = 'none';
                 row.classList.add('d-none');
-                hiddenCount++;
-                // Uncheck if hidden
                 const radio = row.querySelector('.msix-radio');
                 if (radio && radio.checked) {
                     radio.checked = false;
@@ -423,27 +473,20 @@
             }
         });
         
-        console.log(`MSIX Builds - Shown: ${shownCount}, Hidden: ${hiddenCount}`);
-        
-        // Update MSIX card visibility - hide if no builds are shown
-        const msixCard = document.querySelector('.card.shadow-sm.mb-3');
-        if (msixCard && msixCard.querySelector('.card-header.bg-success')) {
-            if (shownCount === 0) {
-                msixCard.style.display = 'none';
-            } else {
-                msixCard.style.display = '';
-            }
+        const msixCard = document.querySelector('.card-header.bg-success')?.closest('.card');
+        if (msixCard && shownCount === 0) {
+            msixCard.style.display = 'none';
+        } else if (msixCard) {
+            msixCard.style.display = '';
         }
         
         refreshSelectionSummary();
     }
 
-    // Environment button changes
     document.querySelectorAll('input[name="SelectedEnvironments"]').forEach(envBtn => {
         envBtn.addEventListener('change', filterMSIXBuilds);
     });
 
-    // Build selection helpers - now for radio buttons
     const buildRadios = document.querySelectorAll('.build-radio');
     const msixRadios = document.querySelectorAll('.msix-radio');
 
@@ -479,11 +522,10 @@
         }
         
         if (!standardRadio && !msixRadio) {
-            selectionSummary.textContent='(none)';
+            selectionSummary.innerHTML = '<span class="text-muted">(none selected)</span>';
         }
     }
 
-    // Row click toggles for radio buttons
     document.querySelectorAll('.build-row').forEach(row=>{
         row.addEventListener('click', e=>{
             if (e.target.type === 'radio' || e.target.tagName === 'LABEL') return;
@@ -506,7 +548,6 @@
         });
     });
 
-    // Build radio change handlers
     buildRadios.forEach(rb=>{
         rb.addEventListener('change', ()=>{
             updateBuildRowStyles();
@@ -528,46 +569,98 @@
         refreshSelectionSummary();
     });
 
-    // Initial filter
     filterMSIXBuilds();
-    
     updateBuildRowStyles();
     refreshSelectionSummary();
 
     // SignalR
     const connection = new signalR.HubConnectionBuilder().withUrl("/DevApp/copyHub").build();
+    const deploymentLog = document.getElementById('deploymentLog');
+    
     connection.on("ReceiveProgress", p => {
         const bar = document.getElementById("progressBar");
         bar.style.width = p + "%";
         bar.textContent = p + "%";
     });
+    
     connection.on("ReceiveMessage", m => {
-        statusBox.textContent += m + "\n";
-        statusBox.scrollTop = statusBox.scrollHeight;
+        try {
+            // Try to parse as structured message
+            const data = JSON.parse(m);
+            let logLine = null;
+            
+            if (data.type === "copy_started") {
+                // Activity: copy start
+                logLine = document.createElement('div');
+                logLine.className = 'mb-2';
+                logLine.innerHTML = `<span style="color: #0d6efd;">📦 Copying files from ${data.app} (${data.build}) to ${data.server} - ${data.totalFiles} files...</span>`;
+            }
+            else if (data.type === "files_copied") {
+                // Activity: copy completed
+                logLine = document.createElement('div');
+                logLine.className = 'mb-2';
+                logLine.innerHTML = `<span style="color: #198754;">✓ ${data.server}: ${data.filesCopied} files copied</span>`;
+            }
+            else if (data.type === "shortcut_creating") {
+                // Activity: shortcut creation started
+                logLine = document.createElement('div');
+                logLine.className = 'mb-2';
+                logLine.innerHTML = `<span style="color: #0d6efd;">🔗 Creating shortcut for ${data.app} (${data.environment})...</span>`;
+            }
+            else if (data.type === "deployment_complete") {
+                // Complete deployment result
+                const env = data.environment ? ` (${data.environment})` : "";
+                logLine = document.createElement('div');
+                logLine.className = 'border-start ps-2 mb-2 border-success border-3';
+                logLine.style.paddingLeft = '0.75rem';
+                
+                // Convert UNC path to local path format
+                const localPath = 'C:\\CSTApps';
+                
+                logLine.innerHTML = `
+                    <div style="color: #198754; font-weight: bold;">✓ ${data.server} - ${data.app}${env}</div>
+                    <div style="color: #666; font-size: 0.8rem;">📦 ${data.shortcutName}</div>
+                    <div style="color: #666; font-size: 0.8rem;"><i class="bi bi-link-45deg"></i> <a href="${data.shortcutLink}" target="_blank" style="color: #0d6efd; text-decoration: none; margin-left: 0.25rem;">${localPath}</a></div>
+                `;
+            }
+            
+            if (logLine) {
+                deploymentLog.appendChild(logLine);
+                deploymentLog.scrollTop = deploymentLog.scrollHeight;
+                return;
+            }
+        } catch (e) {
+            // Not JSON, treat as regular message
+        }
+        
+        // Regular text messages
+        const logLine = document.createElement('div');
+        logLine.className = 'mb-1';
+        logLine.style.color = '#333';
+        logLine.textContent = m;
+        deploymentLog.appendChild(logLine);
+        deploymentLog.scrollTop = deploymentLog.scrollHeight;
     });
+    
     connection.on("ReceiveError", m => {
-        statusBox.textContent += "[ERROR] " + m + "\n";
-        statusBox.scrollTop = statusBox.scrollHeight;
+        const logLine = document.createElement('div');
+        logLine.className = 'mb-1';
+        logLine.innerHTML = `<span style="color: #dc3545; font-weight: bold;">❌ ERROR: ${m}</span>`;
+        deploymentLog.appendChild(logLine);
+        deploymentLog.scrollTop = deploymentLog.scrollHeight;
     });
+    
     connection.start().then(()=> {
         document.getElementById('hubConnectionId').value = connection.connectionId;
     }).catch(err=>{
         console.error("SignalR connection error:", err);
-        // alert('Real-time connection failed. Progress updates may be unavailable.');
     });
 
-    // Deploy
     window.startCopy = function(){
-        // alert('Deploy function called! Check console for details.');
-        console.log('=== DEPLOY DEBUG START ===');
-        console.log('startCopy function called');
-        
-        // Check for MSIX selection
         const msixRadio = document.querySelector('.msix-radio:checked');
         const standardRadio = document.querySelector('.build-radio:checked');
         
         if (msixRadio) {
-            // MSIX installation - redirect to installation page
             const app = msixRadio.dataset.app;
             const build = msixRadio.dataset.build;
             const env = msixRadio.dataset.env;
@@ -586,15 +679,12 @@
             return; 
         }
 
-        // Continue with the rest of the deployment logic...
         progressContainer.classList.remove('d-none');
-        statusBox.textContent = '';
+        deploymentLog.innerHTML = '';  // ← Changed from statusBox.textContent = ''
         deployBtn.disabled = true;
 
         const form = document.getElementById('deploymentForm');
         const fd = new FormData(form);
-        
-        console.log('Original form data:', Array.from(fd.entries()));
         
         fd.set('HubConnectionId', document.getElementById('hubConnectionId').value);
         fd.delete('Selections');
@@ -602,9 +692,6 @@
 
         const token = fd.get('__RequestVerificationToken');
         const body = new URLSearchParams(fd).toString();
-        
-        console.log('Sending request to:', '/DevApp/Deploy?handler=Copy');
-        console.log('Request body:', body);
 
         fetch('/DevApp/Deploy?handler=Copy', {
             method:'POST',
@@ -614,27 +701,15 @@
             },
             body
         }).then(async r=>{
-            console.log('Response received:', r.status, r.statusText);
             const responseText = await r.text();
-            console.log('Raw response text:', responseText);
-            
             let payload;
             try { 
                 payload = JSON.parse(responseText); 
             } catch(e) { 
-                console.log('JSON parse error:', e);
                 payload = null; 
             }
-            
-            // if (!r.ok || !payload || !payload.success) {
-            //     const message = (payload && payload.message) ? payload.message : `HTTP ${r.status}`;
-            //     alert(`Deployment failed: ${message}`);
-            // } else {
-            //     alert('Deployment succeeded!');
-            // }
         }).catch(err=>{
-            console.log('Fetch error:', err);
-            // alert(`Network error: ${err.message}`);
+            console.error('Fetch error:', err);
         }).finally(()=>{
             deployBtn.disabled = false;
         });
@@ -642,4 +717,4 @@
 
 })();
 </script>
-}@* existing scripts remain below *@
+}

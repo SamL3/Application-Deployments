@@ -201,13 +201,8 @@ namespace DevApp.Pages
 
                 _logger.LogInformation("Using staging path: {StagingPath}", staging);
 
-                // Expand selections without an explicit environment into one per selected environment
-                var triples = ParseSelections(Selections)
-                    .SelectMany(t => t.Environment != null
-                        ? new[] { (App: t.App, Build: t.Build, Environment: t.Environment) }
-                        : ((SelectedEnvironments != null && SelectedEnvironments.Length > 0)
-                            ? SelectedEnvironments.Select(env => (App: t.App, Build: t.Build, Environment: (string?)env))
-                            : new[] { (App: t.App, Build: t.Build, Environment: (string?)null) }))
+                // Parse selections and group by (app, build) - environments are separate concerns
+                var buildTriples = ParseSelections(Selections)
                     .Select(t => 
                     {
                         _appExes.TryGetValue(t.App, out var appEntry);
@@ -217,59 +212,111 @@ namespace DevApp.Pages
                         var requiresEnv = appEntry?.ProductRequiresEnvironment ?? false;
                         var productType = appEntry?.ProductType ?? "Standard";
                         
-                        // Build source path based on product structure
-                        string path;
+                        // Get the base source path (without environment-specific suffixes)
+                        string sourcePath;
                         bool exists;
                         
-                        if (requiresEnv && t.Environment != null && productType == "MSIX")
+                        if (requiresEnv && productType == "MSIX")
                         {
-                            // For MSIX: t.Build is the filename (without extension)
-                            // Path: staging\ProductSubFolder\Environment\{filename}.msix
-                            path = Path.Combine(staging, productSubFolder, t.Environment, t.Build + ".msix");
-                            exists = System.IO.File.Exists(path);
+                            // For MSIX files: we still need environment in path, but copy is per-file
+                            // Use the first matching environment to check existence
+                            var envToCheck = t.Environment ?? (SelectedEnvironments?.FirstOrDefault() ?? "");
+                            sourcePath = Path.Combine(staging, productSubFolder, envToCheck, t.Build + ".msix");
+                            exists = System.IO.File.Exists(sourcePath);
                         }
                         else if (requiresEnv && t.Environment != null)
                         {
-                            // Path: staging\ProductSubFolder\Environment\Build\SubFolder
+                            // Standard product with environment: staging\ProductSubFolder\Environment\Build\SubFolder
                             var basePath = Path.Combine(staging, productSubFolder, t.Environment, t.Build);
-                            path = string.IsNullOrEmpty(subFolder) ? basePath : Path.Combine(basePath, subFolder);
-                            exists = Directory.Exists(path);
+                            sourcePath = string.IsNullOrEmpty(subFolder) ? basePath : Path.Combine(basePath, subFolder);
+                            exists = Directory.Exists(sourcePath);
                         }
                         else
                         {
-                            // Path: staging\ProductSubFolder\Build\SubFolder[\Environment]
+                            // Standard product without environment requirement: staging\ProductSubFolder\Build\SubFolder
                             var basePath = string.IsNullOrEmpty(subFolder)
                                 ? Path.Combine(staging, productSubFolder, t.Build)
                                 : Path.Combine(staging, productSubFolder, t.Build, subFolder);
-                            path = (!envInShortcut && t.Environment != null) ? Path.Combine(basePath, t.Environment) : basePath;
-                            exists = Directory.Exists(path);
+                            sourcePath = basePath;
+                            exists = Directory.Exists(sourcePath);
                         }
                         
                         _logger.LogInformation("Source check: App='{App}', Build='{Build}', Env='{Env}', Product='{Product}', Type='{Type}', Path='{Path}', Exists={Exists}", 
-                            t.App, t.Build, t.Environment ?? "(none)", productSubFolder, productType, path, exists);
-                        return (t.App, t.Build, t.Environment, exists);
+                            t.App, t.Build, t.Environment ?? "(none)", productSubFolder, productType, sourcePath, exists);
+                        
+                        return (App: t.App, Build: t.Build, Environment: t.Environment, SourcePath: sourcePath, Exists: exists, EnvInShortcut: envInShortcut, ProductSubFolder: productSubFolder, ProductType: productType, SubFolder: subFolder, RequiresEnv: requiresEnv);
                     })
-                    .Where(t => t.exists)
-                    .Select(t => (App: t.App, Build: t.Build, Environment: t.Environment))
+                    .Where(t => t.Exists)
                     .ToList();
 
-                if (triples.Count == 0)
+                if (buildTriples.Count == 0)
                 {
                     _logger.LogWarning("No valid build sources found after filtering. Check source paths and existence.");
                     return new JsonResult(new { success = false, message = "No valid build sources found. Please verify staging path and build selections." });
                 }
 
-                _logger.LogInformation("Starting deployment tasks. Valid triples found: {Count}", triples.Count);
-
-                var tasks = new List<Task>();
-                foreach (var server in SelectedServers)
-                    foreach (var t in triples)
-                        tasks.Add(CopyFilesAsync(server, t.App, t.Build, t.Environment, HubConnectionId));
-
-                await Task.WhenAll(tasks);
+                // Group by (server, app, build) to copy files only once per build per server
+                var copyTasks = new List<Task>();
+                var shortcutTasks = new List<Task>();
                 
-                _logger.LogInformation("All deployment tasks completed successfully. Total tasks: {Count}", tasks.Count);
-                return new JsonResult(new { success = true, totalCopies = tasks.Count });
+                foreach (var server in SelectedServers)
+                {
+                    var buildGroups = buildTriples
+                        .GroupBy(t => (t.App, t.Build))
+                        .ToList();
+
+                    foreach (var buildGroup in buildGroups)
+                    {
+                        // Determine which environments to create shortcuts for
+                        var environments = buildGroup
+                            .Where(t => t.Environment != null)
+                            .Select(t => t.Environment!)
+                            .Distinct()
+                            .ToList();
+
+                        // If no environment specified in selection, use selected environments
+                        if (environments.Count == 0 && SelectedEnvironments?.Length > 0 && buildGroup.First().EnvInShortcut)
+                        {
+                            environments = SelectedEnvironments.ToList();
+                        }
+
+                        var first = buildGroup.First();
+                        
+                        // **Single copy task for this build**
+                        copyTasks.Add(CopyFilesAsync(
+                            server, 
+                            first.App, 
+                            first.Build, 
+                            environment: null,  // ← Copy without environment-specific subdirectories
+                            hubConnectionId: HubConnectionId,  // ← Use HubConnectionId (parameter name)
+                            buildTriple: first
+                        ));
+
+                        // **Multiple shortcut tasks for each environment**
+                        foreach (var env in environments)
+                        {
+                            shortcutTasks.Add(CreateShortcutAsync(
+                                server,
+                                first.App,
+                                first.Build,
+                                env,
+                                HubConnectionId  // ← Use HubConnectionId (parameter name)
+                            ));
+                        }
+                    }
+                }
+
+                _logger.LogInformation("Starting deployment. Copy tasks: {CopyCount}, Shortcut tasks: {ShortcutCount}", 
+                    copyTasks.Count, shortcutTasks.Count);
+
+                // Run all copy operations first
+                await Task.WhenAll(copyTasks);
+                
+                // Then create shortcuts
+                await Task.WhenAll(shortcutTasks);
+                
+                _logger.LogInformation("All deployment tasks completed successfully.");
+                return new JsonResult(new { success = true, copyTasks = copyTasks.Count, shortcutTasks = shortcutTasks.Count });
             }
             catch (Exception ex)
             {
@@ -522,82 +569,18 @@ namespace DevApp.Pages
             return "file:///" + path.Replace("\\", "/");  // -> file:///C:/CSTApps
         }
 
-        private async Task CopyFilesAsync(string selectedServer, string selectedApp, string selectedBuild, string? environment, string hubConnectionId)
+        private async Task CopyFilesAsync(
+            string selectedServer, 
+            string selectedApp, 
+            string selectedBuild, 
+            string? environment, 
+            string hubConnectionId,
+            (string App, string Build, string Environment, string SourcePath, bool Exists, bool EnvInShortcut, string ProductSubFolder, string ProductType, string SubFolder, bool RequiresEnv) buildTriple)
         {
             try
             {
-                var stagingRoot = _config["StagingPath"]!;
-                _appExes.TryGetValue(selectedApp, out var entry);
-                var envInShortcut = entry?.EnvInShortcut ?? false;
-                var subFolder = entry?.SubFolder ?? string.Empty;
-                var productSubFolder = entry?.ProductSubFolder ?? string.Empty;
-                var requiresEnv = entry?.ProductRequiresEnvironment ?? false;
-                var productType = entry?.ProductType ?? "Standard";
-
-                // Build source path based on product structure
-                string sourcePath;
-                bool isMSIXFile = false;
-                
-                if (requiresEnv && environment != null && productType == "MSIX")
-                {
-                    // For MSIX: selectedBuild is the filename (without extension)
-                    // Path: stagingRoot\ProductSubFolder\Environment\{filename}.msix
-                    sourcePath = Path.Combine(stagingRoot, productSubFolder, environment, selectedBuild + ".msix");
-                    isMSIXFile = true;
-                }
-                else if (requiresEnv && environment != null)
-                {
-                    // Path: stagingRoot\ProductSubFolder\Environment\Build\SubFolder
-                    var basePath = Path.Combine(stagingRoot, productSubFolder, environment, selectedBuild);
-                    sourcePath = string.IsNullOrEmpty(subFolder) ? basePath : Path.Combine(basePath, subFolder);
-                }
-                else
-                {
-                    // Path: stagingRoot\ProductSubFolder\Build\SubFolder[\Environment]
-                    var basePath = string.IsNullOrEmpty(subFolder)
-                        ? Path.Combine(stagingRoot, productSubFolder, selectedBuild)
-                        : Path.Combine(stagingRoot, productSubFolder, selectedBuild, subFolder);
-                    sourcePath = (!envInShortcut && environment != null) ? Path.Combine(basePath, environment) : basePath;
-                }
-
-                // Handle MSIX file copy differently
-                if (isMSIXFile)
-                {
-                    if (!System.IO.File.Exists(sourcePath))
-                    {
-                        await _hubContext.Clients.Client(hubConnectionId)
-                            .SendAsync("ReceiveError", $"MSIX file not found: {sourcePath}");
-                        return;
-                    }
-
-                    var msixCstAppsRoot = _config["CSTApps"] ?? "CSTApps";
-                    var destFolder = $@"\\{selectedServer}\C$\{msixCstAppsRoot}\MSIX";
-                    var destFile = Path.Combine(destFolder, Path.GetFileName(sourcePath));
-
-                    try { Directory.CreateDirectory(destFolder); }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to create MSIX destination folder {Dest}", destFolder);
-                        await _hubContext.Clients.Client(hubConnectionId)
-                            .SendAsync("ReceiveError", $"Cannot create MSIX folder: {destFolder} ({ex.Message})");
-                        return;
-                    }
-
-                    try
-                    {
-                        System.IO.File.Copy(sourcePath, destFile, true);
-                        await _hubContext.Clients.Client(hubConnectionId)
-                            .SendAsync("ReceiveMessage", $"MSIX copied: {Path.GetFileName(sourcePath)} to {selectedServer}");
-                        await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveProgress", 100);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed copying MSIX {Source} to {Dest}", sourcePath, destFile);
-                        await _hubContext.Clients.Client(hubConnectionId)
-                            .SendAsync("ReceiveError", $"MSIX copy failed: {ex.Message}");
-                    }
-                    return;
-                }
+                var sourcePath = buildTriple.SourcePath;
+                var envInShortcut = buildTriple.EnvInShortcut;
 
                 if (!Directory.Exists(sourcePath))
                 {
@@ -607,8 +590,7 @@ namespace DevApp.Pages
                 }
 
                 var cstAppsRoot = _config["CSTApps"] ?? "CSTApps";
-                var baseDest = $@"\\{selectedServer}\C$\{cstAppsRoot}\{selectedApp}\{selectedBuild}";
-                var destPath = (!envInShortcut && environment != null) ? Path.Combine(baseDest, environment) : baseDest;
+                var destPath = $@"\\{selectedServer}\C$\{cstAppsRoot}\{selectedApp}\{selectedBuild}";
 
                 try { Directory.CreateDirectory(destPath); }
                 catch (Exception ex)
@@ -621,6 +603,18 @@ namespace DevApp.Pages
 
                 var files = Directory.GetFiles(sourcePath, "*.*", SearchOption.AllDirectories);
                 int total = files.Length, copied = 0, failed = 0;
+                
+                // Notify start of copy
+                await _hubContext.Clients.Client(hubConnectionId)
+                    .SendAsync("ReceiveMessage", JsonSerializer.Serialize(new
+                    {
+                        type = "copy_started",
+                        server = selectedServer,
+                        app = selectedApp,
+                        build = selectedBuild,
+                        totalFiles = total
+                    }));
+                
                 foreach (var file in files)
                 {
                     var rel = Path.GetRelativePath(sourcePath, file);
@@ -640,7 +634,6 @@ namespace DevApp.Pages
 
                     try
                     {
-                        // Skip copying if destination exists and file is effectively the same
                         if (System.IO.File.Exists(destFile))
                         {
                             var srcInfo = new FileInfo(file);
@@ -655,7 +648,6 @@ namespace DevApp.Pages
                             System.IO.File.Copy(file, destFile, false);
                         }
 
-                        // Count skipped files as processed so progress reaches 100%
                         copied++;
                     }
                     catch (Exception ex)
@@ -670,31 +662,75 @@ namespace DevApp.Pages
                     await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveProgress", progress);
                 }
 
-                await _hubContext.Clients.Client(hubConnectionId)
-                    .SendAsync("ReceiveMessage", $"Copy summary for {selectedServer} � ok: {copied}, failed: {failed}");
-
                 if (failed == 0)
                 {
-                    var remoteShortcutPath = CreateShortcut(selectedServer, selectedApp, selectedBuild, environment);
-                    if (!string.IsNullOrEmpty(remoteShortcutPath))
-                    {
-                        var folder = Path.GetDirectoryName(remoteShortcutPath)!;
-                        var link = ToFileUrl(folder);
-                        var name = Path.GetFileName(remoteShortcutPath);
-                        await _hubContext.Clients.Client(hubConnectionId)
-                            .SendAsync("ReceiveMessage", $"Shortcut created: {name} � {folder} ({link})");
-                    }
+                    await _hubContext.Clients.Client(hubConnectionId)
+                        .SendAsync("ReceiveMessage", JsonSerializer.Serialize(new
+                        {
+                            type = "files_copied",
+                            server = selectedServer,
+                            app = selectedApp,
+                            build = selectedBuild,
+                            filesCopied = copied
+                        }));
                 }
                 else
                 {
                     await _hubContext.Clients.Client(hubConnectionId)
-                        .SendAsync("ReceiveError", "Skipped shortcut creation due to copy errors.");
+                        .SendAsync("ReceiveError", $"⚠ {selectedServer}: {failed} files failed to copy");
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Copy failed for {Server}", selectedServer);
                 await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveError", $"Unexpected error: {ex.Message}");
+            }
+        }
+
+        private async Task CreateShortcutAsync(string selectedServer, string selectedApp, string selectedBuild, string environment, string hubConnectionId)
+        {
+            try
+            {
+                // Notify shortcut creation started
+                await _hubContext.Clients.Client(hubConnectionId)
+                    .SendAsync("ReceiveMessage", JsonSerializer.Serialize(new
+                    {
+                        type = "shortcut_creating",
+                        server = selectedServer,
+                        app = selectedApp,
+                        environment = environment
+                    }));
+
+                var shortcutPath = CreateShortcut(selectedServer, selectedApp, selectedBuild, environment);
+                if (!string.IsNullOrEmpty(shortcutPath))
+                {
+                    var shortcutName = Path.GetFileName(shortcutPath);
+                    var shortcutFolder = Path.GetDirectoryName(shortcutPath)!;
+                    var link = ToFileUrl(shortcutFolder);
+                    
+                    await _hubContext.Clients.Client(hubConnectionId)
+                        .SendAsync("ReceiveMessage", JsonSerializer.Serialize(new
+                        {
+                            type = "deployment_complete",
+                            server = selectedServer,
+                            app = selectedApp,
+                            build = selectedBuild,
+                            environment = environment,
+                            shortcutName = shortcutName,
+                            shortcutFolder = shortcutFolder,
+                            shortcutLink = link
+                        }));
+                }
+                else
+                {
+                    await _hubContext.Clients.Client(hubConnectionId)
+                        .SendAsync("ReceiveError", $"⚠ {selectedServer}: Shortcut creation failed for {environment}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Shortcut creation failed");
+                await _hubContext.Clients.Client(hubConnectionId).SendAsync("ReceiveError", $"Shortcut error: {ex.Message}");
             }
         }
 
@@ -829,113 +865,13 @@ namespace DevApp.Pages
                 // App|Build or App|Build|Env
                 if (parts.Length == 2)
                 {
-                    yield return (parts[0], parts[1], null);
+                    yield return (parts[0], parts[1], (string?)null);
                 }
                 else if (parts.Length == 3)
                 {
-                    yield return (parts[0], parts[1], parts[2]);
+                    yield return (parts[0], parts[1], (string?)parts[2]);
                 }
             }
-        }
-
-        public string GetSearchLocations()
-        {
-            // Show the configured staging root path used to find builds
-            return _config["StagingPath"] ?? string.Empty;
-        }
-
-        public IActionResult OnGetDiagnostics()
-        {
-            var diagnostics = new List<string>();
-            
-            try
-            {
-                var stagingPath = _config["StagingPath"] ?? "(not configured)";
-                diagnostics.Add($"StagingPath: {stagingPath}");
-                
-                diagnostics.Add($"Current User: {Environment.UserName}");
-                diagnostics.Add($"Machine Name: {Environment.MachineName}");
-                diagnostics.Add($"App Running: Yes");
-                
-                if (!string.IsNullOrWhiteSpace(stagingPath) && stagingPath != "(not configured)")
-                {
-                    try
-                    {
-                        var exists = Directory.Exists(stagingPath);
-                        diagnostics.Add($"StagingPath Exists: {exists}");
-                        
-                        if (exists)
-                        {
-                            var dirs = Directory.GetDirectories(stagingPath);
-                            diagnostics.Add($"Build Directories Found: {dirs.Length}");
-                            if (dirs.Length > 0)
-                            {
-                                diagnostics.Add($"Sample Builds: {string.Join(", ", dirs.Select(Path.GetFileName).Take(5))}");
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        diagnostics.Add($"ERROR accessing StagingPath: {ex.GetType().Name}: {ex.Message}");
-                    }
-                }
-                
-                diagnostics.Add($"AppExes Configured: {_appExes?.Count ?? 0}");
-                if (_appExes != null && _appExes.Count > 0)
-                {
-                    foreach (var kvp in _appExes)
-                    {
-                        diagnostics.Add($"  - {kvp.Key}: Exe={kvp.Value.Exe}, SubFolder={kvp.Value.SubFolder}, EnvInShortcut={kvp.Value.EnvInShortcut}");
-                    }
-                }
-                else
-                {
-                    diagnostics.Add("ERROR: AppExes section is missing or empty in appconfig.json!");
-                    diagnostics.Add("Add this to appconfig.json:");
-                    diagnostics.Add("  \"AppExes\": [");
-                    diagnostics.Add("    { \"Name\": \"Admin\", \"Exe\": \"CST.Host.App.exe\", \"SubFolder\": \"Client\\\\CST.Host.App\", \"EnvInShortcut\": true },");
-                    diagnostics.Add("    { \"Name\": \"TIM\", \"Exe\": \"CST.TIM.App.exe\", \"SubFolder\": \"Client\\\\CST.TIM.App\", \"EnvInShortcut\": true }");
-                    diagnostics.Add("  ]");
-                }
-                
-                diagnostics.Add($"Standard AppBuildGroups Loaded: {AppBuildGroups?.Count ?? 0}");
-                diagnostics.Add($"MSIX BuildGroups Loaded: {MSIXBuildGroups?.Count ?? 0}");
-            }
-            catch (Exception ex)
-            {
-                diagnostics.Add($"DIAGNOSTIC ERROR: {ex.GetType().Name}: {ex.Message}");
-                diagnostics.Add($"Stack: {ex.StackTrace}");
-            }
-            
-            return new JsonResult(new { diagnostics });
-        }
-
-        private bool IsServerAccessible(string host, string? root)
-        {
-            if (string.IsNullOrWhiteSpace(host)) return false;
-            if (!QuickPing(host)) return false;
-            if (!string.IsNullOrWhiteSpace(root))
-            {
-                try
-                {
-                    var unc = $@"\\{host}\C$\{root}";
-                    if (Directory.Exists(unc)) return true;
-                }
-                catch { return false; }
-                return false;
-            }
-            return true;
-        }
-
-        private bool QuickPing(string host)
-        {
-            try
-            {
-                using var p = new Ping();
-                var r = p.Send(host, 500);
-                return r != null && r.Status == IPStatus.Success;
-            }
-            catch { return false; }
         }
     }
 }
