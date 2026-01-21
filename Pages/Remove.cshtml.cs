@@ -48,6 +48,12 @@ namespace DevApp.Pages
                     ServerAccessibility[s.HostName] = st.Accessible;
             }
 
+            // Sort servers: online first, then offline (same as Deploy page)
+            ServerList = ServerList
+                .OrderByDescending(s => ServerAccessibility.TryGetValue(s.HostName, out var accessible) && accessible)
+                .ThenBy(s => s.HostName)
+                .ToList();
+
             Servers = ServerList
                 .Where(s => !string.IsNullOrWhiteSpace(s.HostName))
                 .Select(s => new SelectListItem { Value = s.HostName, Text = s.HostName })

@@ -9,20 +9,34 @@
 
 <h1 class="page-title">Remove Applications</h1>
 
+<!-- Search Bar -->
+<div class="mb-3">
+    <div class="input-group">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input type="text" id="serverSearchInput" class="form-control" placeholder="Search servers by hostname or description...">
+        <button class="btn btn-outline-secondary" type="button" id="clearSearchBtn">Clear</button>
+    </div>
+</div>
+
 <form id="maintenanceForm" onsubmit="return false;">
     @Html.AntiForgeryToken()
     <div class="row g-4">
-        <!-- LEFT COLUMN: Servers + Actions stacked -->
+        <!-- Servers Card -->
         <div class="col-lg-4">
-            <div class="card shadow-sm mb-4">
-                <div class="card-header">Servers</div>
+            <div class="card shadow-sm h-100 border-2">
+                <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between">
+                    <strong><i class="bi bi-server"></i> Servers</strong>
+                    <span class="badge bg-white text-primary">@Model.ServerList.Count</span>
+                </div>
                 <div class="card-body p-2">
-                    <div class="table-responsive" style="max-height:320px; overflow:auto;">
+                    <div class="table-responsive" style="max-height:65vh; overflow:auto;">
                         <table class="table table-sm table-hover mb-2">
                             <thead class="table-light sticky-top">
                                 <tr>
                                     <th scope="col">
-                                        <input type="checkbox" id="selectAllServers" class="form-check-input" title="Select All">
+                                        <div class="form-check">
+                                            <input type="checkbox" id="selectAllServers" class="form-check-input" title="Select All">
+                                        </div>
                                     </th>
                                     <th scope="col">Host</th>
                                     <th scope="col">User</th>
@@ -33,13 +47,15 @@
                                 @foreach (var server in Model.ServerList)
                                 {
                                     var accessible = isUp(server.HostName);
-                                    <tr class="server-row @(accessible ? "" : "server-down")" data-hostname="@server.HostName">
+                                    <tr class="server-row @(accessible ? "" : "server-down")" data-hostname="@server.HostName" data-description="@server.Description">
                                         <td>
                                             @if (accessible)
                                             {
-                                                <input type="checkbox" class="form-check-input server-checkbox"
-                                                       value="@server.HostName"
-                                                       id="server_@server.HostName">
+                                                <div class="form-check">
+                                                    <input type="checkbox" class="form-check-input server-checkbox"
+                                                           value="@server.HostName"
+                                                           id="server_@server.HostName">
+                                                </div>
                                             }
                                             else
                                             {
@@ -63,9 +79,28 @@
                     <div id="selectedServersInfo" class="small text-muted mt-2">No servers selected</div>
                 </div>
             </div>
+        </div>
 
-            <div class="card shadow-sm">
-                <div class="card-header">Actions</div>
+        <!-- Deployments Card -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm h-100 border-2">
+                <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                    <strong><i class="bi bi-folder"></i> Deployments on Selected Servers</strong>
+                </div>
+                <div class="card-body p-2" style="max-height:75vh; overflow:auto;">
+                    <div id="deploymentsContainer" class="row g-3">
+                        <div class="col-12 text-muted">Select server(s) to view deployments.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Actions Card -->
+        <div class="col-lg-4">
+            <div class="card shadow-sm h-100 border-2">
+                <div class="card-header bg-info text-white">
+                    <strong><i class="bi bi-trash"></i> Actions</strong>
+                </div>
                 <div class="card-body d-flex flex-column">
                     <div id="selectedInfo" class="mb-3 small text-muted">No selection</div>
                     <button type="button" id="loadDeploymentsBtn" class="btn btn-primary mb-2" disabled>Load Deployments</button>
@@ -77,42 +112,28 @@
             </div>
         </div>
 
-        <!-- CENTER: Deployments -->
-        <div class="col-lg-8">
-            <div class="card shadow-sm h-100">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <span>Deployments on Selected Servers</span>
-                </div>
-                <div class="card-body p-2" style="max-height:75vh; overflow:auto;">
-                    <div id="deploymentsContainer" class="row g-3">
-                        <div class="col-12 text-muted">Select server(s) to view deployments.</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
     </div>
 </form>
 
-<!-- Confirmation modal (unchanged) -->
+<!-- Confirmation modal -->
 <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title">Confirm Remove</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Confirm Remove</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
         <p id="confirmMessage">This will permanently delete the following builds:</p>
-        <div id="confirmBuildsList" class="small bg-light p-2 rounded mb-3" style="max-height:200px; overflow:auto;"></div>
+        <div id="confirmBuildsList" class="small bg-light p-2 rounded mb-3 border" style="max-height:200px; overflow:auto;"></div>
         <div class="form-check">
             <input class="form-check-input" type="checkbox" id="confirmReally" />
-            <label class="form-check-label" for="confirmReally">I understand this will permanently delete the selected build folders.</label>
+            <label class="form-check-label fw-bold" for="confirmReally">I understand this will permanently delete the selected build folders.</label>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" id="confirmCancel" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" id="confirmOk" class="btn btn-danger" disabled>Delete</button>
+        <button type="button" id="confirmOk" class="btn btn-danger" disabled><i class="bi bi-trash"></i> Delete</button>
       </div>
     </div>
   </div>
@@ -145,10 +166,54 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 <style>
+    /* Card enhancements */
+    .card {
+        border: 2px solid rgba(0, 0, 0, 0.125) !important;
+        border-radius: 0.5rem;
+    }
+    
+    .card-header {
+        font-weight: 600;
+        border-bottom: 2px solid rgba(0, 0, 0, 0.125);
+        padding: 0.75rem 1rem;
+    }
+    
     .inaccessible-indicator { display:inline-block; width:1.1rem; text-align:center; }
     .server-row.server-down { opacity:0.55; }
     .server-row.server-down:hover { background:inherit; cursor:not-allowed; }
+    .hidden { display: none !important; }
 </style>
+
+<!-- Search functionality -->
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.getElementById('serverSearchInput');
+    const clearSearchBtn = document.getElementById('clearSearchBtn');
+
+    function filterServers() {
+        const searchTerm = searchInput.value.toLowerCase().trim();
+        const serverRows = document.querySelectorAll('.server-row');
+
+        serverRows.forEach(row => {
+            const hostname = row.getAttribute('data-hostname').toLowerCase();
+            const description = (row.getAttribute('data-description') || '').toLowerCase();
+            
+            if (searchTerm === '' || hostname.includes(searchTerm) || description.includes(searchTerm)) {
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
+        });
+    }
+
+    searchInput.addEventListener('input', filterServers);
+    clearSearchBtn.addEventListener('click', () => {
+        searchInput.value = '';
+        filterServers();
+    });
+});
+</script>
+
 @* existing scripts retained below *@
 
 <!-- NEW: Enable buttons when at least one host is selected -->
