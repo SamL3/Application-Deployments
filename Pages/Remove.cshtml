@@ -107,6 +107,22 @@
                     <button type="button" id="refreshDeploymentsBtn" class="btn btn-outline-secondary mb-2" disabled>Refresh</button>
                     <button type="button" id="selectAllBuilds" class="btn btn-outline-secondary mb-2" disabled>Select All Builds</button>
                     <button type="button" id="removeSelectedBuildsBtn" class="btn btn-danger mb-2" disabled>Remove Selected Builds</button>
+                    
+                    <!-- Progress Section -->
+                    <div id="removeProgressContainer" class="mt-3 d-none">
+                        <hr class="my-2">
+                        <div class="mb-2">
+                            <strong class="small">Removal Progress</strong>
+                        </div>
+                        <div class="progress mb-2" style="height: 25px;">
+                            <div id="removeProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-danger" 
+                                 role="progressbar" style="width: 0%">0%</div>
+                        </div>
+                        <div id="removeLog" class="small border rounded p-2" style="max-height: 150px; overflow-y: auto; background-color: #f8f9fa;">
+                            <div class="text-muted fst-italic">Initializing...</div>
+                        </div>
+                    </div>
+                    
                     <div id="maintenanceStatus" class="small text-muted mt-auto">Ready</div>
                 </div>
             </div>
@@ -125,7 +141,7 @@
       </div>
       <div class="modal-body">
         <p id="confirmMessage">This will permanently delete the following builds:</p>
-        <div id="confirmBuildsList" class="small bg-light p-2 rounded mb-3 border" style="max-height:200px; overflow:auto;"></div>
+        <div id="confirmBuildsList" class="small bg-light p-2 rounded mb-3 border" style="max-height:200px; overflow-y:auto;"></div>
         <div class="form-check">
             <input class="form-check-input" type="checkbox" id="confirmReally" />
             <label class="form-check-label fw-bold" for="confirmReally">I understand this will permanently delete the selected build folders.</label>
@@ -466,10 +482,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const byServer = getSelectedBuildsByServer();
         if (!byServer.size) return;
 
+        // Show progress container
+        const progressContainer = document.getElementById('removeProgressContainer');
+        const progressBar = document.getElementById('removeProgressBar');
+        const removeLog = document.getElementById('removeLog');
+        
+        progressContainer.classList.remove('d-none');
+        removeLog.innerHTML = '';
+        progressBar.style.width = '0%';
+        progressBar.textContent = '0%';
+
         setBusy(true, 'Removing selected builds...');
+
+        const totalServers = byServer.size;
+        let completedServers = 0;
 
         try {
             for (const [server, ids] of byServer){
+                // Log start
+                const startMsg = document.createElement('div');
+                startMsg.className = 'text-primary';
+                startMsg.textContent = `🗑️ Removing ${ids.length} build(s) from ${server}...`;
+                removeLog.appendChild(startMsg);
+                removeLog.scrollTop = removeLog.scrollHeight;
+
                 const fd = new URLSearchParams();
                 fd.append('server', server);
                 ids.forEach(id => fd.append('selectedBuilds', id));
@@ -486,16 +522,45 @@ document.addEventListener('DOMContentLoaded', () => {
                 const txt = await r.text();
                 let payload;
                 try { payload = txt ? JSON.parse(txt) : null; } catch { payload = null; }
+                
                 if (!r.ok || !payload || payload.success !== true){
+                    const errorMsg = document.createElement('div');
+                    errorMsg.className = 'text-danger fw-bold';
+                    errorMsg.textContent = `✗ Failed: ${payload?.message || `Removal failed on ${server}`}`;
+                    removeLog.appendChild(errorMsg);
                     throw new Error(payload?.message || `Removal failed on ${server}`);
                 }
+
+                // Log success
+                const successMsg = document.createElement('div');
+                successMsg.className = 'text-success';
+                successMsg.textContent = `✓ Completed: ${server}`;
+                removeLog.appendChild(successMsg);
+                removeLog.scrollTop = removeLog.scrollHeight;
+
+                // Update progress
+                completedServers++;
+                const progress = Math.round((completedServers / totalServers) * 100);
+                progressBar.style.width = progress + '%';
+                progressBar.textContent = progress + '%';
             }
 
+            const finalMsg = document.createElement('div');
+            finalMsg.className = 'text-success fw-bold mt-2';
+            finalMsg.textContent = '✓ All removals completed successfully!';
+            removeLog.appendChild(finalMsg);
+            removeLog.scrollTop = removeLog.scrollHeight;
+
             statusLine.textContent = 'Removal completed successfully.';
-            // Refresh current view
-            await loadDeployments();
+            
+            // Refresh current view after a short delay
+            setTimeout(async () => {
+                await loadDeployments();
+                progressContainer.classList.add('d-none');
+            }, 2000);
         } catch (e){
             statusLine.textContent = `Error: ${e.message}`;
+            removeLog.scrollTop = removeLog.scrollHeight;
         } finally {
             setBusy(false);
         }

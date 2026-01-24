@@ -293,9 +293,9 @@
                 {
                     <div class="col-lg-4 col-md-6 col-12">
                         <div class="card shadow-sm border-2" style="height: 65vh; display: flex; flex-direction: column;">
-                            <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
-                                <strong><i class="bi bi-box"></i> MSIX Packages</strong>
-                                <span class="badge bg-white text-success">@{
+                            <div class="card-header bg-warning text-dark d-flex align-items-center justify-content-between">
+                                <strong><i class="bi bi-box"></i> MSIX Packages (Local Install)</strong>
+                                <span class="badge bg-dark text-white">@{
                                     var totalMsixVariants = Model.MSIXBuildGroups?.Sum(g => g.Variants.Count) ?? 0;
                                 }@totalMsixVariants</span>
                             </div>
@@ -306,28 +306,30 @@
                                 }
                                 else
                                 {
+                                    <div class="small text-info mb-2">
+                                        <i class="bi bi-info-circle"></i> MSIX packages install locally on this machine only.
+                                    </div>
                                     <div class="list-group list-group-flush">
                                         @foreach (var group in Model.MSIXBuildGroups)
                                         {
                                             @foreach (var v in group.Variants)
                                             {
-                                                var checkboxId = $"checkbox_msix_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
-                                                <label class="list-group-item list-group-item-action py-2 px-2 d-flex align-items-center build-row-msix"
-                                                       for="@checkboxId"
-                                                       data-app="@group.AppName"
-                                                       data-build="@v.Build"
-                                                       data-env="@v.Environment">
-                                                    <div class="form-check">
-                                                        <input class="form-check-input me-2 msix-checkbox"
-                                                               type="checkbox"
-                                                               id="@checkboxId"
-                                                               value="@v.SelectionValue(group.AppName)"
-                                                               data-app="@group.AppName"
-                                                               data-build="@v.Build"
-                                                               data-env="@v.Environment" />
-                                                    </div>
+                                                var buttonId = $"msix_install_{HashCode.Combine(group.AppName, v.Build, v.Environment ?? "")}";
+                                                <div class="list-group-item d-flex justify-content-between align-items-center py-2 px-2"
+                                                     data-app="@group.AppName"
+                                                     data-build="@v.Build"
+                                                     data-env="@v.Environment">
                                                     <span class="small">@group.AppName - @v.Display</span>
-                                                </label>
+                                                    <button type="button" 
+                                                            class="btn btn-sm btn-primary msix-install-btn"
+                                                            id="@buttonId"
+                                                            data-app="@group.AppName"
+                                                            data-build="@v.Build"
+                                                            data-env="@v.Environment"
+                                                            data-selection="@v.SelectionValue(group.AppName)">
+                                                        <i class="bi bi-download"></i> Install
+                                                    </button>
+                                                </div>
                                             }
                                         }
                                     </div>
@@ -629,7 +631,6 @@
     });
 
     const buildRadios = document.querySelectorAll('.build-radio');
-    const msixRadios = document.querySelectorAll('.msix-radio');
     const buildCheckboxes = document.querySelectorAll('.build-checkbox');
 
     function updateBuildRowStyles() {
@@ -641,7 +642,6 @@
     
     function refreshSelectionSummary(){
         const checkedStandard = document.querySelectorAll('.build-checkbox:checked');
-        const msixRadio = document.querySelector('.msix-radio:checked');
         
         selectionSummary.innerHTML='';
         
@@ -653,17 +653,7 @@
                 div.innerHTML = `<strong>${cb.dataset.app}</strong> :: ${cb.dataset.build}${env}`;
                 selectionSummary.appendChild(div);
             });
-        }
-        
-        if (msixRadio) {
-            const div=document.createElement('div');
-            div.className = 'mb-1 p-2 bg-light rounded';
-            const env = msixRadio.dataset.env ? ` <span class="badge bg-secondary">${msixRadio.dataset.env}</span>` : '';
-            div.innerHTML = `<span class="badge bg-success">MSIX</span> <strong>${msixRadio.dataset.app}</strong> :: ${msixRadio.dataset.build}${env}`;
-            selectionSummary.appendChild(div);
-        }
-        
-        if (checkedStandard.length === 0 && !msixRadio) {
+        } else {
             selectionSummary.innerHTML = '<div class="text-muted fst-italic">No build selected</div>';
         }
     }
@@ -677,7 +667,6 @@
 
     clearSelectionBtn.addEventListener('click', ()=>{
         document.querySelectorAll('.build-checkbox').forEach(cb=>cb.checked=false);
-        document.querySelectorAll('.msix-radio').forEach(r=>r.checked=false);
         updateBuildRowStyles();
         refreshSelectionSummary();
     });
@@ -708,22 +697,24 @@
         filterServers();
     });
 
+    // MSIX install button handlers
+    document.querySelectorAll('.msix-install-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const app = this.dataset.app;
+            const build = this.dataset.build;
+            const env = this.dataset.env || '';
+            
+            // Open install page in new window
+            window.open(`/DevApp/Install?app=${encodeURIComponent(app)}&build=${encodeURIComponent(build)}&env=${encodeURIComponent(env)}`, '_blank');
+        });
+    });
+
     // Update startCopy to handle multiple checkbox selections
     window.startCopy = function(){
         console.log('startCopy called');
-        const msixRadio = document.querySelector('.msix-radio:checked');
         const checkedStandard = Array.from(document.querySelectorAll('.build-checkbox:checked'));
         
-        console.log('MSIX radio:', msixRadio);
         console.log('Checked standard:', checkedStandard);
-        
-        if (msixRadio) {
-            const app = msixRadio.dataset.app;
-            const build = msixRadio.dataset.build;
-            const env = msixRadio.dataset.env;
-            window.open(`/DevApp/Install?app=${encodeURIComponent(app)}&build=${encodeURIComponent(build)}&env=${encodeURIComponent(env)}`, '_blank');
-            return;
-        }
         
         const servers = Array.from(serverCheckboxes).filter(c=>c.checked).map(c=>c.value);
         
