@@ -93,7 +93,7 @@
     <div class="row g-4">
         <div class="col-lg-4">
             <!-- Servers Card -->
-            <div class="card shadow-sm border-2" style="max-height: 65vh; display: flex; flex-direction: column;">
+            <div id="serversCard" class="card shadow-sm border-2 layout-card" style="display: flex; flex-direction: column;">
                 <div class="card-header bg-primary text-white d-flex align-items-center justify-content-between">
                     <strong><i class="bi bi-server"></i> Servers</strong>
                     <span class="badge bg-white text-primary">@(Model.ServerList?.Count ?? 0)</span>
@@ -199,10 +199,14 @@
                 @if (adminGroup != null)
                 {
                     <div class="col-lg-4 col-md-6 col-12">
-                        <div class="card shadow-sm border-2" style="height: 65vh; display: flex; flex-direction: column;">
+                        <div class="card shadow-sm border-2 layout-card" style="display: flex; flex-direction: column;">
                             <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
                                 <strong><i class="bi bi-shield-check"></i> CST Admin Manager</strong>
                                 <span class="badge bg-white text-success">@adminGroup.Variants.Count</span>
+                            </div>
+                            <div class="p-2 border-bottom bg-light">
+                                <input type="text" class="form-control form-control-sm app-build-search"
+                                       data-app="@adminGroup.AppName" placeholder="Search builds..." aria-label="Search builds">
                             </div>
                             <div class="card-body p-2" style="overflow:auto; flex: 1;">
                                 @if (adminGroup.Variants.Count == 0)
@@ -247,10 +251,14 @@
                 @if (timGroup != null)
                 {
                     <div class="col-lg-4 col-md-6 col-12">
-                        <div class="card shadow-sm border-2" style="height: 65vh; display: flex; flex-direction: column;">
+                        <div class="card shadow-sm border-2 layout-card" style="display: flex; flex-direction: column;">
                             <div class="card-header bg-success text-white d-flex align-items-center justify-content-between">
                                 <strong><i class="bi bi-clock-history"></i> CST TIM</strong>
                                 <span class="badge bg-white text-success">@timGroup.Variants.Count</span>
+                            </div>
+                            <div class="p-2 border-bottom bg-light">
+                                <input type="text" class="form-control form-control-sm app-build-search"
+                                       data-app="@timGroup.AppName" placeholder="Search builds..." aria-label="Search builds">
                             </div>
                             <div class="card-body p-2" style="overflow:auto; flex: 1;">
                                 @if (timGroup.Variants.Count == 0)
@@ -292,12 +300,16 @@
                 @if (Model.MSIXBuildGroups != null && Model.MSIXBuildGroups.Count > 0)
                 {
                     <div class="col-lg-4 col-md-6 col-12">
-                        <div class="card shadow-sm border-2" style="height: 65vh; display: flex; flex-direction: column;">
+                        <div class="card shadow-sm border-2 layout-card" style="display: flex; flex-direction: column;">
                             <div class="card-header bg-warning text-dark d-flex align-items-center justify-content-between">
                                 <strong><i class="bi bi-box"></i> MSIX Packages (Local Install)</strong>
                                 <span class="badge bg-dark text-white">@{
                                     var totalMsixVariants = Model.MSIXBuildGroups?.Sum(g => g.Variants.Count) ?? 0;
                                 }@totalMsixVariants</span>
+                            </div>
+                            <div class="p-2 border-bottom bg-light">
+                                <input type="text" class="form-control form-control-sm app-build-search"
+                                       data-app="MSIX" placeholder="Search packages..." aria-label="Search packages">
                             </div>
                             <div class="card-body p-2" style="overflow:auto; flex: 1;">
                                 @if (Model.MSIXBuildGroups.Count == 0)
@@ -355,6 +367,10 @@
                                 <div class="card-header small fw-semibold d-flex justify-content-between align-items-center bg-info text-white">
                                     <strong>@group.AppName</strong>
                                     <span class="badge bg-white text-info">@group.Variants.Count</span>
+                                </div>
+                                <div class="p-2 border-bottom bg-light">
+                                    <input type="text" class="form-control form-control-sm app-build-search" 
+                                           data-app="@group.AppName" placeholder="Search builds..." aria-label="Search builds">
                                 </div>
                                 <div class="card-body p-0">
                                     @if (group.Variants.Count == 0)
@@ -504,12 +520,47 @@
         background-color: #f8f9fa;
         border: 1px solid #dee2e6;
     }
+    
+    /* Dynamic Layout Card */
+    .layout-card {
+        min-height: 400px;
+        /* height will be set dynamic via JS or fallback to a default if JS fails */
+        height: 65vh; 
+    }
 </style>
 }
 
 @section Scripts {
 <script>
 (function(){
+    // Adjust card heights based on window height
+    function adjustLayout() {
+        const headerHeight = document.querySelector('nav.navbar')?.offsetHeight || 0;
+        const footerHeight = document.querySelector('footer.border-top')?.offsetHeight || 0;
+        const controlsHeight = document.querySelector('.page-title')?.offsetHeight + 
+                               (document.querySelector('.row.g-3.mb-3')?.offsetHeight || 0) + 70; // + padding/margins
+        
+        // Calculate available height
+        const windowHeight = window.innerHeight;
+        // Target: fill remaining space but maintain some padding
+        // Approximately: Window - (Header + Footer + Controls + Margins)
+        let availableHeight = windowHeight - headerHeight - footerHeight - controlsHeight - 40; 
+        
+        // Enforce a sensible minimum
+        if (availableHeight < 400) availableHeight = 400;
+        
+        // Apply to all layout cards
+        document.querySelectorAll('.layout-card').forEach(card => {
+            card.style.height = `${availableHeight}px`;
+        });
+    }
+
+    // Run on load and resize
+    window.addEventListener('load', adjustLayout);
+    window.addEventListener('resize', adjustLayout);
+    // Also run immediately in case DOM is ready
+    adjustLayout();
+
     // Prevent toggling inaccessible rows
     document.querySelectorAll('.server-row.server-offline').forEach(row=>{
         row.addEventListener('click', e=>{
@@ -706,6 +757,57 @@
             
             // Open install page in new window
             window.open(`/DevApp/Install?app=${encodeURIComponent(app)}&build=${encodeURIComponent(build)}&env=${encodeURIComponent(env)}`, '_blank');
+        });
+    });
+
+    // App Build Search
+    document.querySelectorAll('.app-build-search').forEach(input => {
+        input.addEventListener('input', function() {
+            const searchTerm = this.value.toLowerCase().trim();
+            const appName = this.dataset.app;
+            const card = this.closest('.card');
+            
+            if (!card) return;
+            
+            // Standard table rows
+            const tableRows = card.querySelectorAll('tbody tr.build-row');
+            tableRows.forEach(row => {
+                const buildName = (row.dataset.build || '').toLowerCase();
+                const envName = (row.dataset.env || '').toLowerCase();
+                const displayText = row.innerText.toLowerCase();
+                
+                if (searchTerm === '' || 
+                    buildName.includes(searchTerm) || 
+                    envName.includes(searchTerm) || 
+                    displayText.includes(searchTerm)) {
+                    
+                    row.classList.remove('d-none');
+                } else {
+                    row.classList.add('d-none');
+                }
+            });
+
+            // List group items (Admin/TIM/MSIX style)
+            const listItems = card.querySelectorAll('.list-group-item');
+            listItems.forEach(item => {
+                const buildName = (item.dataset.build || '').toLowerCase();
+                const envName = (item.dataset.env || '').toLowerCase();
+                const displayText = item.innerText.toLowerCase();
+
+                if (searchTerm === '' || 
+                     buildName.includes(searchTerm) || 
+                     envName.includes(searchTerm) || 
+                     displayText.includes(searchTerm)) {
+                     
+                     item.classList.remove('d-none');
+                     // restore display flex if needed, list-group-item is usually block or flex
+                     if(item.classList.contains('d-flex')) item.style.display = 'flex';
+                     else item.style.display = 'block';
+                 } else {
+                     item.classList.add('d-none');
+                     item.style.display = 'none';
+                 }
+            });
         });
     });
 

@@ -16,6 +16,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Net.NetworkInformation; // add
+using System.Text.RegularExpressions;
 
 namespace DevApp.Pages
 {
@@ -492,6 +493,15 @@ namespace DevApp.Pages
                     variants = variants
                         .OrderByDescending(v =>
                         {
+                            try {
+                                var match = Regex.Match(v.Build, @"^\d+(\.\d+){1,3}");
+                                if (match.Success && Version.TryParse(match.Value, out var ver))
+                                    return ver;
+                                return new Version(0, 0);
+                            } catch { return new Version(0, 0); }
+                        })
+                        .ThenByDescending(v =>
+                        {
                             try
                             {
                                 string path;
@@ -519,8 +529,7 @@ namespace DevApp.Pages
                             }
                             catch { return DateTime.MinValue; }
                         })
-                        .Take(10) // Limit to 10 most recent builds
-                        .ToList();
+                        .ToList(); // Removed .Take(10) to show all builds
 
                     var buildGroup = new AppBuildGroup
                     {
