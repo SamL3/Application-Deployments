@@ -651,7 +651,8 @@
         
         document.querySelectorAll('.build-row-msix').forEach(row => {
             const rowEnv = row.dataset.env;
-            const shouldShow = selectedEnvs.length > 0 && selectedEnvs.some(env => env.toLowerCase() === rowEnv?.toLowerCase());
+            // Show all builds if no environments selected, or show only matching builds if environments are selected
+            const shouldShow = selectedEnvs.length === 0 || selectedEnvs.some(env => env.toLowerCase() === rowEnv?.toLowerCase());
             
             if (shouldShow) {
                 row.style.display = 'flex';
@@ -667,8 +668,9 @@
             }
         });
         
-        const msixCard = document.querySelector('.card-header.bg-success')?.closest('.card');
-        if (msixCard && shownCount === 0) {
+        const msixCard = document.querySelector('.card-header.bg-warning')?.closest('.card');
+        // Only hide the entire MSIX card if environments are selected but no builds match
+        if (msixCard && selectedEnvs.length > 0 && shownCount === 0) {
             msixCard.style.display = 'none';
         } else if (msixCard) {
             msixCard.style.display = '';

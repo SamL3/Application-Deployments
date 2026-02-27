@@ -1,0 +1,98 @@
+@page
+@model DevApp.Pages.MSIXManagerModel
+@{
+    ViewData["Title"] = "MSIX Installer Manager";
+}
+
+<div class="container-fluid my-4">
+    <h1 class="page-title mb-4">
+        <i class="bi bi-box-seam"></i> MSIX Installer Manager
+    </h1>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <strong>Static Installer Management</strong>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        This page manages static .appinstaller files for each minor version of MSIX packages.
+                        Each minor version (e.g., 1.8, 1.9, 1.10) has its own static site that always points to the latest patch within that version.
+                    </p>
+
+                    <div class="alert alert-info">
+                        <strong><i class="bi bi-info-circle"></i> How it works:</strong>
+                        <ul class="mb-0">
+                            <li>Static sites are created on IIS server: <code>\\BuildCST\c$\inetpub\wwwroot\MSIX\{MinorVersion}\</code></li>
+                            <li>Each minor version gets a .appinstaller file: <code>{AppName}_{Environment}.appinstaller</code></li>
+                            <li>The .appinstaller always points to the latest patch version for that minor release</li>
+                            <li>Install buttons use URLs like: <code>https://BuildCST/MSIX/{MinorVersion}/{AppName}_{Environment}.appinstaller</code></li>
+                        </ul>
+                    </div>
+
+                    <form method="post" asp-page-handler="Regenerate" class="mt-4">
+                        @Html.AntiForgeryToken()
+                        <button type="submit" class="btn btn-success btn-lg">
+                            <i class="bi bi-arrow-clockwise"></i> Regenerate All Static Installers
+                        </button>
+                    </form>
+
+                    @if (Model.Success)
+                    {
+                        <div class="alert alert-success mt-4">
+                            <strong>✓ Success!</strong> @Model.Message
+                        </div>
+                    }
+
+                    @if (Model.Error)
+                    {
+                        <div class="alert alert-danger mt-4">
+                            <strong>✗ Error!</strong> @Model.Message
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card shadow-sm">
+                <div class="card-header bg-secondary text-white">
+                    <strong>Current Static Sites</strong>
+                </div>
+                <div class="card-body">
+                    @if (Model.StaticSites.Count == 0)
+                    {
+                        <p class="text-muted">No static sites found. Click "Regenerate" to create them.</p>
+                    }
+                    else
+                    {
+                        <div class="list-group list-group-flush">
+                            @foreach (var site in Model.StaticSites)
+                            {
+                                <div class="list-group-item">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <strong>@site.MinorVersion</strong>
+                                            <div class="small text-muted">@site.FileCount file(s)</div>
+                                        </div>
+                                        <span class="badge bg-primary">@site.Environment</span>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Styles {
+<style>
+    .page-title {
+        color: #333;
+        font-weight: 600;
+    }
+</style>
+}

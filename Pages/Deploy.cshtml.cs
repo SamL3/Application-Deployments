@@ -584,7 +584,7 @@ namespace DevApp.Pages
             string selectedBuild, 
             string? environment, 
             string hubConnectionId,
-            (string App, string Build, string Environment, string SourcePath, bool Exists, bool EnvInShortcut, string ProductSubFolder, string ProductType, string SubFolder, bool RequiresEnv) buildTriple)
+            (string App, string Build, string? Environment, string SourcePath, bool Exists, bool EnvInShortcut, string ProductSubFolder, string ProductType, string SubFolder, bool RequiresEnv) buildTriple)
         {
             try
             {

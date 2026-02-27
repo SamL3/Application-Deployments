@@ -25,6 +25,7 @@ builder.Services.AddLogging();
 
 builder.Services.AddSingleton<HostAvailabilityService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<HostAvailabilityService>());
+builder.Services.AddSingleton<MSIXInstallerService>();
 
 var app = builder.Build();
 

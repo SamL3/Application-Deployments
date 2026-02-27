@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using DevApp.Services;
 
 namespace DevApp.Pages
 {
@@ -10,12 +12,14 @@ namespace DevApp.Pages
         private readonly IConfiguration _config;
         private readonly ILogger<InstallModel> _logger;
         private readonly IWebHostEnvironment _env;
+        private readonly MSIXInstallerService _msixService;
 
-        public InstallModel(IConfiguration config, ILogger<InstallModel> logger, IWebHostEnvironment env)
+        public InstallModel(IConfiguration config, ILogger<InstallModel> logger, IWebHostEnvironment env, MSIXInstallerService msixService)
         {
             _config = config;
             _logger = logger;
             _env = env;
+            _msixService = msixService;
         }
 
         public string AppName { get; set; } = string.Empty;
@@ -38,98 +42,194 @@ namespace DevApp.Pages
 
             try
             {
-                var stagingPath = _config["StagingPath"] ?? throw new InvalidOperationException("StagingPath not configured");
-                
-                // Get product config
-                var productsSection = _config.GetSection("Products");
-                var products = productsSection.Get<List<ProductConfig>>();
-                var product = products?.FirstOrDefault(p => p.Type == "MSIX");
-                
-                if (product == null)
+                // Extract minor version from build (e.g., "CircaSports_1.9.671.156_x64" -> "1.9")
+                var minorVersion = ExtractMinorVersion(build);
+                if (string.IsNullOrEmpty(minorVersion))
                 {
-                    ErrorMessage = "MSIX product configuration not found.";
+                    ErrorMessage = $"Cannot extract minor version from build: {build}";
                     return Page();
                 }
 
-                // Path: staging\ProductSubFolder\Environment\{filename}.msix
-                var msixPath = Path.Combine(stagingPath, product.SubFolder, env, build + ".msix");
-                
-                if (!System.IO.File.Exists(msixPath))
-                {
-                    ErrorMessage = $"MSIX file not found: {msixPath}";
-                    _logger.LogError("MSIX file not found: {Path}", msixPath);
-                    return Page();
-                }
-
-                // Generate .appinstaller file
-                var appInstallerContent = GenerateAppInstaller(app, build, env, msixPath);
-                
-                // Save to wwwroot for serving
-                var wwwPath = Path.Combine(_env.WebRootPath, "msix");
-                Directory.CreateDirectory(wwwPath);
-                
-                var appInstallerFileName = $"{app}_{build}_{env}.appinstaller";
-                var appInstallerPath = Path.Combine(wwwPath, appInstallerFileName);
-                
-                System.IO.File.WriteAllText(appInstallerPath, appInstallerContent);
-                
-                // Build URL - include path base if app is hosted in subfolder
+                // Get the MSIX server URL - use current server instead of hardcoded config
                 var request = HttpContext.Request;
-                var baseUrl = $"{request.Scheme}://{request.Host}{request.PathBase}";
-                AppInstallerUrl = $"{baseUrl}/msix/{appInstallerFileName}";
+                var msixServerUrl = $"{request.Scheme}://{request.Host}";
                 
-                _logger.LogInformation("Generated .appinstaller for {App} {Build} {Env}: {Url}", app, build, env, AppInstallerUrl);
+                _logger.LogInformation("Using MSIX server URL from current request: {Url}", msixServerUrl);
+
+                // Check if static .appinstaller exists on the IIS server
+                var msixPhysicalPath = _config["MSIXPhysicalPath"];
+                
+                if (string.IsNullOrWhiteSpace(msixPhysicalPath))
+                {
+                    ErrorMessage = "MSIXPhysicalPath not configured in appconfig.json";
+                    return Page();
+                }
+
+                var staticPath = Path.Combine(msixPhysicalPath, "MSIX", minorVersion, $"{app}_{env}.appinstaller");
+                
+                if (!System.IO.File.Exists(staticPath))
+                {
+                    _logger.LogWarning("Static .appinstaller not found at {Path}. Creating on-demand...", staticPath);
+                    
+                    try
+                    {
+                        // Get staging path
+                        var stagingPath = _config["StagingPath"];
+                        if (string.IsNullOrWhiteSpace(stagingPath))
+                        {
+                            ErrorMessage = "StagingPath not configured";
+                            return Page();
+                        }
+                        
+                        // Find the MSIX file in staging: StagingPath\WinMobile\{minorVersion}\{env}\{build}.msix
+                        var msixFileName = $"{build}.msix";
+                        var sourceMsixPath = Path.Combine(stagingPath, "WinMobile", minorVersion, env, msixFileName);
+                        
+                        if (!System.IO.File.Exists(sourceMsixPath))
+                        {
+                            // Try without minor version subdirectory: StagingPath\WinMobile\{env}\{build}.msix
+                            sourceMsixPath = Path.Combine(stagingPath, "WinMobile", env, msixFileName);
+                            
+                            if (!System.IO.File.Exists(sourceMsixPath))
+                            {
+                                ErrorMessage = $"MSIX file not found: {msixFileName} in {Path.Combine(stagingPath, "WinMobile")}";
+                                _logger.LogError("MSIX file not found at {Path}", sourceMsixPath);
+                                return Page();
+                            }
+                        }
+                        
+                        // Create local directory structure
+                        var localMsixDir = Path.Combine(msixPhysicalPath, "MSIX", minorVersion);
+                        Directory.CreateDirectory(localMsixDir);
+                        
+                        // Copy MSIX file locally (only if it doesn't already exist)
+                        var localMsixPath = Path.Combine(localMsixDir, msixFileName);
+                        
+                        if (!System.IO.File.Exists(localMsixPath))
+                        {
+                            _logger.LogInformation("Copying MSIX from {Source} to {Dest}", sourceMsixPath, localMsixPath);
+                            System.IO.File.Copy(sourceMsixPath, localMsixPath, overwrite: false);
+                            _logger.LogInformation("MSIX file copied successfully");
+                        }
+                        else
+                        {
+                            _logger.LogInformation("MSIX file already exists locally, skipping copy: {Path}", localMsixPath);
+                        }
+                        
+                        // Generate .appinstaller file
+                        var appInstallerContent = GenerateAppInstallerXml(app, build, minorVersion, env, msixFileName, msixServerUrl);
+                        System.IO.File.WriteAllText(staticPath, appInstallerContent);
+                        
+                        _logger.LogInformation("Created .appinstaller at {Path}", staticPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        ErrorMessage = $"Failed to create installer: {ex.Message}";
+                        _logger.LogError(ex, "Failed to create installer on-demand");
+                        return Page();
+                    }
+                }
+
+                // Build URL for the static .appinstaller on the current IIS server
+                // Example: https://ppcsuswiis1/MSIX/1.9/WinMobile_UAT.appinstaller
+                AppInstallerUrl = $"{msixServerUrl}/MSIX/{minorVersion}/{app}_{env}.appinstaller";
+                
+                _logger.LogInformation("Serving static .appinstaller for {App} {Build} {Env}: {Url}", app, build, env, AppInstallerUrl);
             }
             catch (Exception ex)
             {
-                ErrorMessage = $"Error generating installer: {ex.Message}";
-                _logger.LogError(ex, "Error generating .appinstaller for {App} {Build} {Env}", app, build, env);
+                ErrorMessage = $"Error loading installer: {ex.Message}";
+                _logger.LogError(ex, "Error loading .appinstaller for {App} {Build} {Env}", app, build, env);
             }
 
             return Page();
         }
 
-        private string GenerateAppInstaller(string appName, string buildName, string environment, string msixPath)
+        private string? ExtractMinorVersion(string build)
         {
-            var request = HttpContext.Request;
-            var baseUrl = $"{request.Scheme}://{request.Host}{request.PathBase}";
-            
-            // Copy MSIX to wwwroot for serving
-            var wwwMsixPath = Path.Combine(_env.WebRootPath, "msix");
-            Directory.CreateDirectory(wwwMsixPath);
-            
-            var msixFileName = Path.GetFileName(msixPath);
-            var destMsixPath = Path.Combine(wwwMsixPath, msixFileName);
-            System.IO.File.Copy(msixPath, destMsixPath, true);
-            
-            var msixUrl = $"{baseUrl}/msix/{msixFileName}";
-            
-            // Read MSIX package info (simplified - in production, parse the AppxManifest.xml from the package)
-            var version = "1.0.0.0"; // Extract from MSIX or use build name
-            var publisher = "CN=YourCompany"; // Extract from MSIX
-            var packageName = appName.Replace(" ", "");
-            
-            var xml = new XDocument(
-                new XDeclaration("1.0", "utf-8", null),
-                new XElement(XName.Get("AppInstaller", "http://schemas.microsoft.com/appx/appinstaller/2018"),
-                    new XAttribute("Uri", $"{baseUrl}/msix/{appName}_{buildName}_{environment}.appinstaller"),
-                    new XAttribute("Version", version),
-                    new XElement(XName.Get("MainPackage", "http://schemas.microsoft.com/appx/appinstaller/2018"),
-                        new XAttribute("Name", packageName),
-                        new XAttribute("Publisher", publisher),
-                        new XAttribute("Version", version),
-                        new XAttribute("Uri", msixUrl),
-                        new XAttribute("ProcessorArchitecture", "x64")
-                    ),
-                    new XElement(XName.Get("UpdateSettings", "http://schemas.microsoft.com/appx/appinstaller/2018"),
-                        new XElement(XName.Get("OnLaunch", "http://schemas.microsoft.com/appx/appinstaller/2018"),
-                            new XAttribute("HoursBetweenUpdateChecks", "0")
-                        )
-                    )
-                )
-            );
+            // Extract major.minor from version string (e.g., "CircaSports_1.9.671.156_x64" -> "1.9")
+            // Pattern looks for version numbers anywhere in the string (supports 3 or 4 part versions)
+            var match = Regex.Match(build, @"(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?");
+            if (match.Success)
+            {
+                return $"{match.Groups[1].Value}.{match.Groups[2].Value}";
+            }
+            return null;
+        }
 
-            return xml.ToString();
+        private string GenerateAppInstallerXml(string appName, string build, string minorVersion, string environment, string msixFileName, string serverUrl)
+        {
+            try
+            {
+                // Extract package identity from the actual MSIX file
+                var msixPath = Path.Combine(_config["MSIXPhysicalPath"], "MSIX", minorVersion, msixFileName);
+                
+                if (!System.IO.File.Exists(msixPath))
+                {
+                    _logger.LogError("MSIX file not found at {Path} when generating appinstaller", msixPath);
+                    throw new FileNotFoundException($"MSIX file not found: {msixPath}");
+                }
+                
+                // Read the AppxManifest.xml from the MSIX package
+                using (var zip = System.IO.Compression.ZipFile.OpenRead(msixPath))
+                {
+                    var manifestEntry = zip.Entries.FirstOrDefault(e => e.Name.Equals("AppxManifest.xml", StringComparison.OrdinalIgnoreCase));
+                    
+                    if (manifestEntry == null)
+                    {
+                        throw new InvalidOperationException("AppxManifest.xml not found in MSIX package");
+                    }
+                    
+                    using (var stream = manifestEntry.Open())
+                    using (var reader = new System.IO.StreamReader(stream))
+                    {
+                        var manifestContent = reader.ReadToEnd();
+                        var manifest = System.Xml.Linq.XDocument.Parse(manifestContent);
+                        
+                        // Extract Identity element
+                        var ns = manifest.Root?.Name.Namespace ?? XNamespace.None;
+                        var identity = manifest.Root?.Element(ns + "Identity");
+                        
+                        if (identity == null)
+                        {
+                            throw new InvalidOperationException("Identity element not found in AppxManifest.xml");
+                        }
+                        
+                        var packageName = identity.Attribute("Name")?.Value ?? appName;
+                        var publisher = identity.Attribute("Publisher")?.Value ?? "CN=Unknown";
+                        var version = identity.Attribute("Version")?.Value ?? "1.0.0.0";
+                        var architecture = identity.Attribute("ProcessorArchitecture")?.Value ?? "x64";
+                        
+                        _logger.LogInformation("Extracted MSIX identity: Name={Name}, Version={Version}, Publisher={Publisher}", 
+                            packageName, version, publisher.Substring(0, Math.Min(50, publisher.Length)));
+                        
+                        var appInstallerUrl = $"{serverUrl}/MSIX/{minorVersion}/{appName}_{environment}.appinstaller";
+                        var msixUrl = $"{serverUrl}/MSIX/{minorVersion}/{msixFileName}";
+                        
+                        var xml = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<AppInstaller xmlns=""http://schemas.microsoft.com/appx/appinstaller/2018"" 
+              Uri=""{appInstallerUrl}"" 
+              Version=""{version}"">
+  <MainPackage xmlns=""http://schemas.microsoft.com/appx/appinstaller/2018"" 
+               Name=""{packageName}"" 
+               Publisher=""{System.Security.SecurityElement.Escape(publisher)}"" 
+               Version=""{version}"" 
+               Uri=""{msixUrl}"" 
+               ProcessorArchitecture=""{architecture}"" />
+  <UpdateSettings xmlns=""http://schemas.microsoft.com/appx/appinstaller/2018"">
+    <OnLaunch HoursBetweenUpdateChecks=""0"" />
+  </UpdateSettings>
+</AppInstaller>";
+                        
+                        return xml;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to generate AppInstaller XML from MSIX package");
+                throw;
+            }
         }
 
         private class ProductConfig
